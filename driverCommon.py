@@ -1,4 +1,10 @@
 #!/usr/bin/python3
+# -*- coding: UTF-8 -*-
+# probe for umlauts: öäüÖÄÜß
+#  import web_pdb; web_pdb.set_trace() #debugging
+
+print ("imported " + __name__)
+
 # from imp import reload
 # driver.py
 # implements read, write and getList function for all protocols:
@@ -17,20 +23,8 @@
 
 
 import os, time, sys, datetime
-import readETH008 as ETH
-import readPV as PV
-import readHealth as HEALTH
-import readtemp as TEMP
-import readAlias as ALIAS
-import readComp as COMP
-import readDlms as DLMS
-import readMOD as MOD
-import readVar as VAR
-try:
-    import readHM as HM
-except:
-    pass
-    
+import socket
+import threading
 import config
 import logging
 from funcLog import logged
@@ -40,6 +34,46 @@ import urllib.request
 import urllib.error
 import json
 import JSONHelper
+
+import readETH008 as ETH
+import readPV as PV
+import readHealth as HEALTH
+import readtemp as TEMP
+import readAlias as ALIAS
+import readComp as COMP
+
+try:
+    import readDlms as DLMS
+except Exception as e:
+    logging.error("unable to load DLMS module on this box (%s): %s" % (socket.gethostname(), str(type(e))))
+    pass
+
+import readMOD as MOD
+import readVar as VAR
+import readExec as EXEC
+import readConfig as CONFIG
+import readDISP as DISP
+import readBX as BX
+import PVTransform
+import dpLogger
+
+
+try:
+    import readMQTT as MQTT
+except Exception as e:
+    logging.error("unable to load MQTT module on this box (%s): %s" % (socket.gethostname(), str(type(e))))
+    pass
+
+try:
+    import readHM as HM
+except Exception as e:
+    logging.error("unable to load HM module on this box (%s): %s" % (socket.gethostname(), str(type(e))))
+    pass
+    
+allowedDrivers=["BX", "HM", "EXEC", "VAR", "MOD", "DLMS", "COMP", "ALIAS", "TEMP", "HEALTH", "PV", "ETH", "CONFIG", "DISP", "MQTT"]
+threadSafeDrivers=["COMP", "ALIAS"] # they must be thread safe because they can call themselves recursively which would lead to a deadlock.
+lockPerDriver={x:threading.Lock() for x in allowedDrivers}
+
 import archive
 
 import eventhandler
@@ -53,30 +87,72 @@ import eventhandler
 @logged(logging.DEBUG)
 def write1(dp, data, pulse):
     rv = None
-    if type(dp) is str:
-        dpList=dp.split('/')
-    else:
-        dpList=dp
-
-    while len(dpList) < 2:  # brauche zuminest 2 elemente, auch wenn sie leer sind!
-        dpList += [""]
-        
-    if dpList[0] == "": # kein protokoll!!!
-       dpList[0] = "PV"  # default!
-       
-    pu=""
-    if not pulse is None:
-        pu = ", pulse"
-       
-    cmd= dpList[0] + ".write('"  + "/".join(dpList[1:]) + "', data" + pu +" )"
-    
-    #logging.error("about to execute " + cmd)
+    logBuffer=[]
+    originalDp = dp    
+    reverseTransformation = ""
     
     try:
-        rv=eval(cmd)
-    except Exception as e:
-        rv = "driverCommon write1 Exception %s for %s, data is %s" % (type(e).__name__, cmd, str(data)), 0, "~" , datetime.datetime.now(), dp, "Exception"
-        logging.exception("driverCommon.py")
+        dp, data, reverseTransformation = PVTransform.transform(dp, data,"rootWrite", logBuffer)
+
+        if type(dp) is str:
+            dpList=dp.split('/')
+        else:
+            dpList=dp
+
+        while len(dpList) < 2:  # brauche zuminest 2 elemente, auch wenn sie leer sind!
+            dpList += [""]
+            
+        if dpList[0] == "": # kein protokoll!!!
+           dpList[0] = "PV"  # default!
+           
+        pu=""
+        if not pulse is None:
+            pu = ", pulse"
+           
+        #logging.error("about to execute " + cmd)
+        
+        try:
+            if not (dpList[0] in allowedDrivers):
+                s='{value} not in list of allowed drivers'.format(value=dpList[0])
+                logBuffer=[]
+                dpLogger.log(logBuffer, "EXCEPTION", s)
+                dpLogger.flushLog(dp, logBuffer)
+                raise RuntimeError(s)
+
+            driver=dpList[0]
+            cmd = driver + ".write('"  + "/".join(dpList[1:]) + "', data" + pu +" )"
+            
+            if (driver in threadSafeDrivers):
+                rv=eval(cmd)
+            else:
+                with lockPerDriver[driver]:
+                    rv=eval(cmd)
+            
+            if len(rv) > 4:
+                r4, r1, dummy = PVTransform.transform(rv[4], rv[1], reverseTransformation, logBuffer)
+                rv = [rv[0], r1, rv[2], rv[3], r4, rv[5]]
+            
+            
+        except Exception as e:
+            rv = "driverCommon write1 Exception %s for %s, data is %s" % (type(e).__name__, cmd, str(data)), 0, "~" , datetime.datetime.now(), dp, "Exception"
+            dpLogger.log(logBuffer, "EXCEPTION", "%s - %s"%(rv[0], str(e)))
+            logging.exception("driverCommon.py")
+            
+    except Exception as e:  #exception during transform above... there is no cmd....
+        s="driverCommon.py: exception %s occurred: %s %s, %s" % (type(e).__name__, str(e),str(e.args), str(e.__traceback__))
+        logging.error(s)
+
+        s="driverCommon write1 Exception %s (%s) for dp %s, data is %s" % (type(e).__name__, str(e), dp, str(data))
+        rv = s, 0, "~" , datetime.datetime.now(), dp, "Exception"
+        dpLogger.log(logBuffer, "EXCEPTION", "%s"%(s))
+        # aus irgendeinem grund liefert logging.exception für die exceptions der regex-engine eine weitere Exceptionn
+        # daher wird oben mit logging.error geloggt.
+        #logging.exception("driverCommon.py")  hier gibt's eine exception.  
+                
+    dpLogger.flushLog(dp,logBuffer)
+    if originalDp != dp:    
+        #additionally flush to dp:
+        dpLogger.flushLog(originalDp,logBuffer)
     
     return rv
 
@@ -89,35 +165,88 @@ def write1(dp, data, pulse):
 #
 @logged(logging.DEBUG)
 def read1(dp):
+    
     rv = None
-    if type(dp) is str:
-        dpList=dp.split('/')
-    else:
-        dpList=dp
+    #reverseTransformation is necessary because the reverse is probably not unique.
+    # e.g. a TASMOTA/xxx maps to a MQTT/yyy but not necessarily the other way round.
+    #
+    
+    logBuffer=[]    
+    originalDp = dp
+    dummy = ""
+    reverseTransformation = ""
 
-    while len(dpList) < 2:  # brauche zuminest 2 elemente, auch wenn sie leer sind!
-        dpList += [""]
-        
-    if dpList[0] == "": # kein protokoll!!!
-       dpList[0] = "PV"  # default!
-       
-    cmd= dpList[0] + ".read('"  + "/".join(dpList[1:]) + "')"
-    
-    #logging.Error("about to execute " + cmd)
-    
     try:
-        rv=eval(cmd)
-        
-        if rv[5]== "Ok":
-            eventhandler.enqueue(eventhandler.READEvent, rv[3], rv[4], rv[3])
-        
-    except Exception as e:
-        rv = "driverCommon read1 Exception %s for %s" % (type(e).__name__, cmd), 0, "~" , datetime.datetime.now(), dp, "Exception"
-        logging.exception("driverCommon.py")
+        dp, dummy, reverseTransformation = PVTransform.transform(dp, None,"rootRead", logBuffer)
     
+        if type(dp) is str:
+            dpList=dp.split('/')
+        else:
+            dpList=dp
+
+        while len(dpList) < 2:  # brauche zuminest 2 elemente, auch wenn sie leer sind!
+            dpList += [""]
+            
+        if dpList[0] == "": # kein protokoll!!!
+           dpList[0] = "PV"  # default!
+           
+        cmd= dpList[0] + ".read('"  + "/".join(dpList[1:]) + "')"
+        
+        #logging.error("about to execute " + cmd)
+        
+        try:
+            if not (dpList[0] in allowedDrivers):
+                raise RuntimeError('>{value}< not in list of allowed drivers'.format(value=dpList[0]))
+            
+            driver=dpList[0]
+            started=time.perf_counter()        
+            waited=0.0
+            if (driver in threadSafeDrivers):
+                rv=eval(cmd)
+            else:
+                with lockPerDriver[driver]:
+                    waited=time.perf_counter()
+                    rv=eval(cmd)
+            finished=time.perf_counter()
+            
+            dpLogger.log(logBuffer, "driverCommon", "read %s returned %s took %f %s" % (dp,rv[5], finished-started, 
+                        "" if waited == 0.0 else "waited %f " % (waited - started)))
+                
+            #leads to TypeError: 'tuple' object does not support item assignment
+            #rv[4], rv[1], dummy = PVTransform.transform(rv[4], rv[1], reverseTransformation, logBuffer)
+
+            r4, r1, dummy = PVTransform.transform(rv[4], rv[1], reverseTransformation, logBuffer)
+            rv = [rv[0], r1, rv[2], rv[3], r4, rv[5]]
+            
+            
+            if rv[5]== "Ok":
+                eventhandler.enqueue(eventhandler.READEvent, rv[4], rv[1], rv[3]) #type, dp, value, timestamp
+            
+        except Exception as e:
+            s="driverCommon read1 Exception %s for %s" % (type(e).__name__, cmd)
+            rv = s, 0, "~" , datetime.datetime.now(), dp, "Exception"
+            print (s)
+            dpLogger.log(logBuffer, "EXCEPTION", s)
+            logging.exception("driverCommon.py")
+            
+    except Exception as e:  #exception during transform above...
+        s="driverCommon transform Exception %s for dp %s" % (type(e).__name__, dp)
+        rv = s, 0, "~" , datetime.datetime.now(), dp, "Exception"
+        print (s)
+        dpLogger.log(logBuffer, "EXCEPTION", "%s - %s"%(s, str(e)))
+        logging.exception("driverCommon.py")
+        
+        
+    dpLogger.flushLog(dp,logBuffer)
+    if originalDp != dp:    
+        #additionally flush to dp:
+        dpLogger.flushLog(originalDp,logBuffer)
+        
     return rv
 
-#--------------------------------
+
+    
+#-----------------------------------------------------------------------------------------------
 # reads datapoint from string
 # returns tuple
 #
@@ -131,12 +260,12 @@ def read(dp, maxAge = 10):
 
     if globals.config is None:
         with config.configClass() as configuration:
-#    gConfig=configuration
-            globals.config= configuration
-            rv=globals.cache.get(dp, read1, maxAge)
+            globals.config = configuration
+            rv = globals.cache.get(dp, read1, maxAge)
             globals.config = None
     else:
         rv=globals.cache.get(dp, read1, maxAge)
+        
     
     return rv
 
@@ -152,7 +281,6 @@ def write(dp, data, pulse=None):
 
     if globals.config is None:
         with config.configClass() as configuration:
-#    gConfig=configuration
             globals.config= configuration
             rv=write1(dp,data, pulse)
             globals.config = None
@@ -208,7 +336,6 @@ def getInfoArchive(dp):
 
     if globals.config is None:
         with config.configClass() as configuration:
-#    gConfig=configuration
             globals.config= configuration
             rv=getInfo1Archive(dp)
             globals.config = None
@@ -225,7 +352,6 @@ def getDatapointsArchive():
 
     if globals.config is None:
         with config.configClass() as configuration:
-#    gConfig=configuration
             globals.config= configuration
             rv=globals.gArchive.getDatapoints()
             globals.config = None
@@ -262,7 +388,8 @@ def readArchiveMulti(dps, timeStamp, n, timeDelta = None, operation = None, time
         if isinstance(info, (list, tuple)):
             rv1[0]=info[0] # desc
             rv1[2]=info[1] # unit
-            rv1[3]=info[2] # timestamp
+            #rv1[3]=info[2] # timestamp from (warum?) sollte nicht "To" sein?
+            rv1[3]=info[3] # timestamp To
             rv1[4]=info[6] # dp 
             rv1[5]="Ok"
             
@@ -286,7 +413,6 @@ def readArchive(dp, timeStamp, n, timeDelta = None, operation = None, timeStampT
     
     if globals.config is None:
         with config.configClass() as configuration:
-#    gConfig=configuration
             globals.config= configuration
             rv=read1Archive(dp, timeStamp, n, timeDelta, operation, timeStampTo)
             globals.config = None
@@ -307,7 +433,7 @@ def writeViaWeb(dp, data, target="", pulse = None):
     #with config.configClass() as configuration:
 
     if target == "":
-        target = globals.config.defaultServer           
+        target = globals.config.configMap["defaultServer"]
            
     jData = JSONHelper.encodeParm(data)
             
@@ -342,12 +468,14 @@ def writeViaWeb(dp, data, target="", pulse = None):
 # from imp import reload
 # reads one dp given as string via web
 # returns result as list.
+# cached: fast return; probable warning: "No Cached Data"
+# needed for "compile" if using temprary unavailable datapoints
 #
 @logged(logging.DEBUG)
 def readViaWeb(dp, maxAge = None, target = ""):    
     
     if target == "":
-        target = globals.config.defaultServer
+        target = globals.config.configMap["defaultServer"]
            
     #if "?" in dp:  #servername given
     #    x=dp.split("?",1)
@@ -355,22 +483,28 @@ def readViaWeb(dp, maxAge = None, target = ""):
     #    target=x[0]
     #    dp=x[1]
             
-    url='http://{target}/read?dp={dp}'.format(target=target, dp=JSONHelper.encodeParm(dp))
+    url='http://{target}/read?dp={dp}&maxAge={mA}'.format(target=target, dp=JSONHelper.encodeParm(dp), mA=JSONHelper.encodeParm(maxAge))
     
     
-    #print ("url is %s" % url)
+    #print ("driverCommon.readViaWeb: url is %s" % url)
     try:
+        #import web_pdb; web_pdb.set_trace() #debugging
         f =  urllib.request.urlopen(url)
         s = f.read()
+        
+        #wenn im server eine exception ist, kommt hier ein string zurück...
+        
         s= s.decode(encoding='UTF-8')
         #print ("server returned" + s)
         rv = JSONHelper.decodeParm(s)
+        if isinstance(rv, str): #is an exception from the server
+            raise RuntimeError('from pvServer: {value}'.format(value=rv))            
+            
 
         
     except  Exception as e:
-        rv  ="readViaWeb cannot open url %s" % url
-        rv += str(e)
-        rv =[rv]
+        v  ="Exception: readViaWeb cannot open url %s" % url
+        rv = "Exception: readViaWeb %s, %s" % (type(e).__name__, e.args), v, "~" , datetime.datetime.now(), dp, "Exception"
         #print (rv) 
 
     return (rv)
@@ -380,13 +514,13 @@ def readViaWeb(dp, maxAge = None, target = ""):
 # returns list of lists
 #
 @logged(logging.DEBUG)
-def readMultiViaWeb(dps, maxAge = None, target = ""):    
+def readMultiViaWeb(dps, maxAge = None, target = ""):    #sollte hier nicht maxAge 10 stehen?
     
     if target == "":
-        target = globals.config.defaultServer
+        target = globals.config.configMap["defaultServer"]
        
     
-    url="http://{target}/readMulti?dp={dps}".format(target=target, dps=JSONHelper.encodeParm(dps))
+    url="http://{target}/readMulti?dp={dps}&maxAge={mA}".format(target=target, dps=JSONHelper.encodeParm(dps), mA=JSONHelper.encodeParm(maxAge))
 
     
     #print ("url is %s" % url)
@@ -436,7 +570,7 @@ def readArchiveViaWeb(dp, timeStamp, n, target = "", timeStampTo = None):
     #with config.configClass() as configuration:
 
         if target == "":
-            target = globals.gConfig.defaultServer[0]
+            target = globals.config.configMap["defaultServer"]
 
         url='http://{target}/readArchive?dp={dp}&n={n}&timeStamp={timeStamp}'.format(target=target, dp=JSONHelper.encodeParm(dp), n=JSONHelper.encodeParm(n), timeStamp=JSONHelper.encodeParm(timeStamp))
         if not timeStampTo is None:
@@ -471,7 +605,7 @@ def getInfoArchiveViaWeb(dp, target = ""):
     #with config.configClass() as configuration:
 
         if target == "":
-            target = globals.gConfig.defaultServer[0]
+            target = globals.config.configMap["defaultServer"]
 
         url='http://{target}/getInfoArchive?dp={dp}'.format(target=target, dp=JSONHelper.encodeParm(dp))
         
@@ -493,6 +627,53 @@ def getInfoArchiveViaWeb(dp, target = ""):
         return (rv)
 
         
+#-----------------------------------------------------------------------------------------------------
+# checks session if read=1 and or write=3(r+w) is allowed:
+#
+def checkSession(session):
+    return 3
+
+
+#--------------------------------
+#  creates a session context in config.globals and returns an identifier string
+#
+def newSession(user, password):
+
+    rv = "UNAUTHORIZED"
+    if user == "sigi":
+        rv = "mysessioncookie"
+        
+    return rv
+
+    
+#--------------------------------
+# reads configuration
+# checks credentials (via session)
+# returns tuple
+#
+#@logged(logging.DEBUG)
+#def readConfig(dp, session = None):
+#    rv = "UNAUTHORIZED"
+#    if (checkSession(session) & 1) > 0:
+#        rv = config.readConfig(dp)
+#        
+#    return rv
+
+#--------------------------------
+# write configuration
+# checks credentials (via session)
+# note that flush has to be done to make config changes permanent
+# returns tuple
+#
+#@logged(logging.DEBUG)
+#def writeConfig(dp, data, session=None):  #sessioncookie references context in globals
+#    rv = "UNAUTHORIZED"
+#    if (checkSession(session) & 2) > 0:
+#        rv = config.writeConfig(dp, data)
+#    
+#    return rv
+    
+    
     
 #---------------------------------------------------------------------------------------
 if __name__ == "__main__":
@@ -501,7 +682,22 @@ if __name__ == "__main__":
         print ("try: driverCommon.py -l debug")
         logging.getLogger().setLevel(logging.DEBUG)
         
-        if True:
+        if False:
+            dps = ("TASMOTA/MamaLampe/POWER@raspi",)
+            for i in range(1,5):
+                print ("readMultiViaWeb (%s) returns %s" % (dps, str(readMulti(dps))))
+                #print ("write %s returns %s)" % (" ", str(writeViaWeb("MQTT/cmnd/MamaLampe/power@raspi", None, target))))
+                time.sleep(1)
+
+        if False:
+            dps = ("TASMOTA/MamaLampe/POWER@raspi",)
+            target= "localhost:8000"
+            for i in range(1,5):
+                print ("readMultiViaWeb (%s, %s) returns %s" % (dps, target, str(readMultiViaWeb(dps, target=target))))
+                print ("write %s returns %s)" % (" ", str(writeViaWeb("MQTT/cmnd/MamaLampe/power@raspi", None, target))))
+                time.sleep(1)
+
+        if False:
             dps = ("VAR/AUTOBOILER",)
             target= "kr:8000"
             print ("readMultiViaWeb (%s, %s)" % (dps, target))
@@ -515,11 +711,11 @@ if __name__ == "__main__":
             dats = readMultiViaWeb(dps, target=target)        
             print ("returns " + str(dats))
 
-        if False:
+        if True:
             dp="ETH/Wohnzimmer/V"
             x=read(dp)
             print ("normal: ", x, type(x[1]))
-            x=readViaWeb(dp, "kellerRaspi:8000")
+            x=readViaWeb(dp, target="kellerRaspi:8000")
             print ("viaWeb: ", x, type(x[1]))
             x=readMultiViaWeb(("ETH/Kellerschalter/8", "ETH/Wohnzimmer/V") , target="kellerRaspi:8000")
             print ("MultiviaWeb: ", x, type(x[0][1]))
@@ -545,6 +741,10 @@ if __name__ == "__main__":
                 writeViaWeb(dp, 123, target)
                 writeViaWeb(dp, 345, target)
                 
+        if False:
+            dps= ("ETH/Kellerschalter/8", "wrong/Wohnzimmer/V")
+            x= readMulti(dps)
+            print ("multi ", x)
                 
         #dpwrite= "aaphr0?VAR/nonsensedatapoint"
         #s = writeViaWeb(dpwrite, 987)

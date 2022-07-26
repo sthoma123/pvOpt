@@ -1,15 +1,47 @@
 #!/usr/bin/python3
+# -*- coding: UTF-8 -*-
+# probe for umlauts: öäüÖÄÜß
+
 # from imp import reload
 # logging decorator
 #       
+print ("imported " + __name__)
 
 import logging
-import config
-import globals
+import time
+#import config
+#import globals
 
 from functools import wraps
-import logging
 
+# from: https://www.zopyx.com/andreas-jung/contents/a-python-decorator-for-measuring-the-execution-time-of-methods
+#
+global g_level 
+g_level = 0
+global g_path 
+g_path = []
+def timeit(method):
+
+    def timed(*args, **kw):
+
+        ts = time.process_time()
+        global g_level
+        global g_path
+        
+        g_level = g_level + 1
+        g_path.append(method.__name__)
+        result = method(*args, **kw)
+        te = time.process_time()
+        g_level = g_level - 1
+
+        print ('%s %r | %2.2f | sec' % (".."*g_level, "/".join(g_path), te-ts))
+        g_path.pop()
+        
+        return result
+
+    return timed
+
+    
 def logged(level, name=None, message=None):
     '''
     Add logging to a function.  level is the logging

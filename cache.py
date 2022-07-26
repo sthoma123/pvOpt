@@ -1,4 +1,12 @@
 #!/usr/bin/python3
+# -*- coding: UTF-8 -*-
+# probe for umlauts: öäüÖÄÜß
+
+#
+#  returned copied item instead of cached item because ALIAS modifies list (datapoint)
+#
+print ("imported " + __name__)
+
 import os, glob, time, sys, datetime, time
 
 #import cache
@@ -26,8 +34,11 @@ class CachedDict(dict):
 
 #--------------------------------------------
     def __init__(self):    
-
-        self.autoRefreshduration = dict()
+    
+        #refresh wird nur von read_dlms_raw verwendet, da der Wert _immer_ aus dem cache zurückgeliefert wird, da das read_raw extrem lange dauert.
+        # die Frage ist, ob das nicht besser über einen Timer und einer cache-invalidation gemacht wird...
+        #
+        self.autoRefreshduration = dict() 
         self.autoRefreshfn = dict()
         self.t = threading.Thread(target=self.refreshThread, args = ( ))
         self.t.daemon = True
@@ -65,10 +76,38 @@ class CachedDict(dict):
                     print (str(e))
                     pass
                     
-            time.sleep(2)
+            time.sleep(10)
             
         return 0
-        
+
+
+#--------------------------------------------        
+# e.g. for spontaneous values like in MQTT.
+#
+#
+    def enterValue(self, key, rv, duration):
+        self[key] = CachedItem(key, rv, duration)
+        if list == type(rv) or tuple == type(rv):
+            status = "NOK"
+            if len(rv) > 4:            #ignore everything else!
+                status="Ok"
+                if len(rv) > 5:
+                    status=rv[5]            
+            if status == "Ok":            
+                globals.gArchive.write(rv)
+
+    def getValue(self, key):
+        rv = None
+        if key in self:
+            rv = self[key].value
+            
+        xrv = rv
+        try:
+            xrv = rv.copy()
+        except:
+            pass
+        return xrv
+
 #--------------------------------------------        
     @logged(logging.DEBUG)
     def invalidate(self, key):
@@ -77,37 +116,55 @@ class CachedDict(dict):
         
 #--------------------------------------------        
     @logged(logging.DEBUG)
-    def get(self, key, fn, duration=1):
+    def get(self, key, fn, duration=1):     #duration is maxAge
         #if not hasattr(self,"m_history"):
         #    self.m_history={}  #leeres dict
+        rv = None
+        
         if key not in self \
         or self[key].timeStamp + duration < time.time():
-            o = fn(key)
-            self[key] = CachedItem(key, o, duration)
-            # und jetzt in archive schreiben:
-            #cache wird auch noch für "nichstandarddinge" wie ETH read_raw verwendet.
-            # archive darf nur mit einem sinnvollen Tupel aufgerufen werden und auch nur wenn das read Ok war.
-            if list == type(o) or tuple == type(o):
-                status = "NOK"
-                if len(o) > 4:            #ignore everything else!
-                    status="Ok"
-                    if len(o) > 5:
-                        status=o[5]            
-                if status == "Ok":            
-                    globals.gArchive.write(o)
-            
-            #zusätzlich in history eintragen:
-            #if key not in self.m_history:
-            #    self.m_history[key]=[o]  #liste mit o anlegen für key
-            #else:
-            #    self.m_history[key].append(o)
-            #logging.log(90, "cache: %s: %d items" % (key, len(self.m_history[key])))
+            if duration > 999998:  # do not read, issue a warning (needed for fast compile that does not rely on real data)
+                rv = "Warning: no cached data for %s" % (key), 0, "~" , datetime.datetime.now(), key, "Warning"
+            else:
+                #cache miss; try to read from driver
+                rv = fn(key)   
+                #print ("cache  function returned %s for %s" % (rv[5], rv[1]))
+                
+                #if len(rv) > 5:
+                #    #print ("cache got %s " % rv[5])
+                #    if rv[5]=="subscription enqueued": # a rather temporary return: reduce duration of validity
+                #        duration = -1
+                #        #print ("cache duration reduced")
 
-        #else:
-        #    print ("CACHE HIT for %s " % key)
+                #if duration>=0: #do not cache if not Ok...
+                self[key] = CachedItem(key, rv, duration)
+                    
+                # und jetzt in archive schreiben:
+                #cache wird auch noch für "nichstandarddinge" wie ETH read_raw verwendet.
+                # archive darf nur mit einem sinnvollen Tupel aufgerufen werden und auch nur wenn das read Ok war.
+                if list == type(rv) or tuple == type(rv):
+                    status = "NOK"
+                    if len(rv) > 4:            #ignore everything else!
+                        status="Ok"
+                        if len(rv) > 5:
+                            status=rv[5]            
+                    if status == "Ok":            
+                        globals.gArchive.write(rv)
+                
+        else:
+            rv = self[key].value 
+            #while len(rv)<=6: #just a hint for the reader:
+            #    rv.append("")
+            #rv[6]="cached"
+
+        #since the caller might modify the returned buffer, I have to clone it:
         
-
-        return self[key].value
+        xrv = rv
+        try:
+            xrv = rv.copy()
+        except:
+            pass
+        return xrv
 
 
 
@@ -116,7 +173,6 @@ if __name__ == '__main__':
     import driverCommon
     import globals
     with config.configClass() as configuration:
-#    gConfig=configuration
         globals.config= configuration
         import readtemp
         cd = CachedDict()

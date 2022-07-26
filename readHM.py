@@ -1,4 +1,7 @@
 #!/usr/bin/python3
+# -*- coding: UTF-8 -*-
+# probe for umlauts: öäüÖÄÜß
+#  import web_pdb; web_pdb.set_trace() #debugging
 #"""
 # from https://larsmichelsen.github.io/pmatic/doc/index.html
 #
@@ -45,6 +48,7 @@
 #
 #
 #
+print ("imported " + __name__)
 
 import os, glob, time, sys, datetime
 #import http, http.client
@@ -53,7 +57,6 @@ import json
 import config
 if __name__ == '__main__':
     config.doNotParseCommandline = True
-    print ("readHM set donot to True")
 
 
 import globals
@@ -62,6 +65,7 @@ import logging
 
 import pmatic
 import metadata
+import helpers
 
 
 #----------------------------------------------------------------------------------------------------
@@ -91,8 +95,21 @@ def read_hm(dp):
 
     while len(dpList) < 2:  # brauche zuminest 2 elemente, auch wenn sie leer sind!
         dpList += [""]
-
+        
+    ## do not issue too many requests if there is a session problem:
+    try:
+        HMDeferred = globals.HMDeferred
+        #"mqttClient" in dir(globals)
+    except:
+        globals.HMDeferred = time.time() - 1
+        
     retry = 3
+    if globals.HMDeferred > time.time():
+        rv = "HM down", 0, "~" , datetime.datetime.now() , "HM/%s" %(dp), "HM down"
+        retry = 0
+
+    #import web_pdb; web_pdb.set_trace() #debugging
+
     try:
         while retry > 0:
             retry -= 1
@@ -103,16 +120,17 @@ def read_hm(dp):
             except:
                 ccuAddr = dpList[0]
                 globals.ccu = pmatic.CCU (address=ccuAddr, credentials=("Admin", ""))            
-                print ("readHM NEW CCU object ")
+                print ("readHM NEW CCU object for HM: %s" % (ccuAddr))
                 ccu = globals.ccu
-
+                
             try:
                 address=""
                 channel=-1
                 key=""
-                if len(dpList)>=2:
+                if len(dpList)>=2:                    
                     address=dpList[1]
-                    dev = ccu.devices.get(address)  #return list of channels
+                    if address != "":                        
+                        dev = ccu.devices.get(address)  #return list of channels
                 if len(dpList)>=3:
                     channel=int(dpList[2])
                     c = dev.channels[channel]
@@ -161,6 +179,8 @@ def read_hm(dp):
                     s=""
                     k=c.values.keys() # values ist ein dict mit value und unit etc
                     print("%s of %s has %s" % (c.name,dev.name, k))
+                    v=""
+                    unit=""
                     try:
                         x=c.values[key]
                         v=x.value
@@ -175,15 +195,19 @@ def read_hm(dp):
                     rv[5] = "Ok"
                 break
 
-            except Exception as ex:
-                print("Exception %s, %s" % (type(ex).__name__, ex.args))
+            except Exception as e:
+                print("HM exception %s %s " % (type(e).__name__, e.args))
+#readHM NEW CCU object for HM: HMRASPI
+#HM exception KeyError ('device_id',)
+                
                 globals.ccu = None  #eventuell die Verbindung neu aufbauen.
-                print ("readHM Sessionproblem: RETRY %d" % retry)
-                if retry == 0:
-                    raise ex
+                if retry == 0:                    
+                    print ("setting HMDeferred")
+                    globals.HMDeferred = time.time() + 360 #seconds; probably better configurable...
+                    raise e
     except Exception as e:
         logging.exception ( "HM: problem with %s" % (dp))
-        rv= "Exception %s, %s" % (type(e).__name__, e.args), 0, "~" , datetime.datetime.now() , "HM/%s" %(dp), "Exception"
+        rv = "Exception %s, %s" % (type(e).__name__, e.args), 0, "~" , datetime.datetime.now() , "HM/%s" %(dp), "Exception"
                     
     return rv    
         
@@ -202,25 +226,6 @@ def read(dp):
 
     return rv
 
-#----------------------------------------------------------------------------------------------------
-# myConvert
-#
-# Exceptions werden mit Absicht durchhgeworfen!
-#
-def myConvert(value, TYP):
-    rv = 0
-    
-    if TYP is int:
-        rv = int(value)
-    elif TYP is bool:
-        rv = bool(value)
-    elif TYP is float:
-        rv = float(value)
-    else:
-        raise Exception("myConverty does not know type %s " % (str(TYP)))
-    
-    return rv
-    
 #----------------------------------------------------------------------------------------------------
 # raw_write
 #
@@ -245,6 +250,10 @@ def raw_write (dp, value, pulsetime):
     if len(dpList) < 4:  # brauche zuminest 4 elemente
         rv [5] = "Error, please supply at least 4 elements in dp"
     else:
+        retry = 3
+        if globals.HMDeferred > time.time():
+            rv = "HM Deferred", 0, "~" , datetime.datetime.now() , "HM/%s" %(dp), "HM Deferred"
+            retry = 0
 
         retry = 3
         try:
@@ -297,7 +306,7 @@ def raw_write (dp, value, pulsetime):
                         x=c.values[key]                        
                         print ("readHM try to set value to %s" %str(value))
                         
-                        x.value = myConvert(value, type(x.value))  # wirft PMActionFailed exception wenn ncht writeable.
+                        x.value = helpers.myConvert(value, type(x.value))  # wirft PMActionFailed exception wenn ncht writeable.
                         v=x.value # ruecklesen
                         unit=x.unit
                         rv[5] = "Ok"
@@ -316,10 +325,10 @@ def raw_write (dp, value, pulsetime):
                     break  # kein retry
 
                 except Exception as ex:
-                    print("Exception %s, %s" % (type(ex).__name__, ex.args))
                     globals.ccu = None  #eventuell die Verbindung neu aufbauen.
-                    print ("readHM Sessionproblem: RETRY %d" % retry)
                     if retry == 0:
+                        print ("setting HMDeferred")
+                        globals.HMDeferred = time.time() + 360 #seconds; probably better configurable...
                         raise ex
                         
         except Exception as e:
@@ -338,13 +347,18 @@ def raw_write (dp, value, pulsetime):
 #
 @logged(logging.DEBUG)
 def write(dp, value, pulsetime=None):  #3rd parameter needed for some other providers...
+    # two methods for toggling: either with "XOR" in the datapoint or by "TOGGLE" as Value
+    
 
     try:
-        
         if type(dp) is str:
             dpList=dp.split('/')
         else:
             dpList=dp
+
+        if value == "TOGGLE":
+            state = read(dp)
+            value = state[1] ^ 1
             
         if len(dpList) > 1:
             i=0
@@ -404,13 +418,12 @@ def cli():
 #
 def main() :
 
-  print ("readHM again sets doNot.. to True")
   config.doNotParseCommandline = True  
   hmAddress, dp, value, pulse = cli()
   
   with config.configClass() as configuration:
     globals.config= configuration
-    #hmAddress=globals.config.homeMatic
+    #hmAddress=globals.config.configMap["homeMatic"]
 
 
     while 1:

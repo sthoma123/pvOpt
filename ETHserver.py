@@ -1,4 +1,7 @@
 #!/usr/bin/python3
+# -*- coding: UTF-8 -*-
+# probe for umlauts: öäüÖÄÜß
+
 #
 # server for ETH8020 and similar on port 17494
 # uses a binary protocol
@@ -17,6 +20,9 @@
 #
 #
 #
+
+print ("imported " + __name__)
+
 import socketserver
 import socket
 
@@ -155,7 +161,6 @@ def start_ETHserver(port):
     
 if __name__ == "__main__":
     with config.configClass() as configuration:
-        globals.gConfig= configuration  #brauch ichs noch???
         globals.config= configuration   
         
         

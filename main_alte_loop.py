@@ -61,11 +61,7 @@ saunaVerbrauch = 0.7
 
 gHoldcycleSolarPumpe=0
 gHoldcycleFilterPumpe=0
-gcycleFilterPumpeOn= -100  # cycle that pump was switched on last time, to get correct pool temp.
-
 gCountHold=60  #600 sekunden, 10 minuten
-poolDueToSolar=False
-
 
 REGELRESERVE=400
 MAXUEBERSCHUSS=6500
@@ -266,7 +262,6 @@ def allesAus():
 
     global gHoldcycleSolarPumpe
     global gHoldcycleFilterPumpe
-    global gcycleFilterPumpeOn
     
     print ("Alle Verbraucher aus")
     #eth008.set_relais (zaehlerschalter, 12, 1)
@@ -276,7 +271,7 @@ def allesAus():
     myWrite("ETH/"+kellerschalter+"/"+str(3), 0, "kellerraspi:8000")
     myWrite("ETH/"+kellerschalter+"/"+str(4), 0, "kellerraspi:8000")
     myWrite("ETH/"+kellerschalter+"/"+str(5), 0, "kellerraspi:8000")
-    #myWrite("ETH/"+kellerschalter+"/"+str(8), 1, "kellerraspi:8000")
+    myWrite("ETH/"+kellerschalter+"/"+str(8), 1, "kellerraspi:8000")
 
     # wasser aus
     myWrite("ETH/"+keller2+"/"+str(13), 0, "kellerraspi:8000")
@@ -286,8 +281,6 @@ def allesAus():
 
     gHoldcycleSolarPumpe=0
     gHoldcycleFilterPumpe=0
-    gcycleFilterPumpeOn= -100
-    poolDueToSolar=False
     
     for i in range(13,21):  #bodenheizung
        myWrite("ETH/"+kuechenschalter+"/"+str(i), 0, "kellerraspi:8000")
@@ -323,82 +316,8 @@ def getBXState():
                 
     return cap, power,  pvPower
 
-#----------------------------------------------------------------------------------
-# returns old value
-#  
-gSWITCHES = [7,14,11,3,6,10,4,5,9,12,8,2,13,15,16]
-def readWohnzimmerLight():
-    global gSWITCHES
-    baseDP="ETH/WOHNZIMMER/"
-    
-    dps=[]
-    for s in gSWITCHES:
-        dps.append(baseDP + str(s))
-        
-    rv = []
-    dat= readstatus(dps, "kellerraspi:8000")
-    for v in dat:
-        x=-1
-        if len(v) > 5:
-            if v[5] == "Ok":
-                x=(v[1])
-                
-        if x == -1:
-            print("readWohnzimmer got error for %s " % str(v))
-                
-        rv.append(x)
-            
-    return rv
 
-#----------------------------------------------------------------------------------
-# returns old value
-#  
-def setWohnzimmerLight(newSwitches):
-    
-    global gSWITCHES
-    rv=[0]*len(gSWITCHES)
-    baseDP="ETH/WOHNZIMMER/"
-    
-    i=0
-    for s in gSWITCHES:
-        dp = baseDP + str(s)
-        myWrite(dp, newSwitches[i], "kellerraspi:8000")
-        i+=1
-    
-    return newSwitches
-        
 
-#----------------------------------------------------------------------------------
-# check if Homematic is switched on fully, then switch all lights on.
-#
-#
-def handleWohnzimmer(oldPercentLight, oldSwitches):
-
-    dps1 = ("HM/HMRASPI/QEQ1842516/1/LEVEL",)
-    dats1 = readstatus(dps1, "raspi:8000")
-    percentLight = -1
-    if len(dats1) > 0:
-        if len(dats1[0])> 5:
-            if dats1[0][5] == "Ok":
-                percentLight=dats1[0][1]
-    
-    if percentLight == -1:
-         print("handleWohnzimmer read percent got error for %s " % dats1)
-        
-            
-    print ("handleWohnzimmer %3.2f" % percentLight) #full light
-    if (percentLight == 1 and oldPercentLight < 1):
-        oldSwitches = readWohnzimmerLight()
-        print ("Wohnzimmer FULL oldSwitches = %s" % str(oldSwitches))
-        setWohnzimmerLight([0]*len(gSWITCHES))
-    
-    if (percentLight < 1 and oldPercentLight == 1): # dim light
-        setWohnzimmerLight(oldSwitches)
-        print ("Wohnzimmer dim to oldSwitches = %s" % str(oldSwitches))
-    
-    oldPercentLight=percentLight
-    
-    return oldPercentLight, oldSwitches
 
 #--------------------------------------------------------------------------------
 # retourniert bilanz zwischen den beiden Zaehlern:
@@ -428,13 +347,10 @@ def getUeberschuss():
 #
 #  retourniert das was ich zu verbrauchen glaube.
 #
-def setzeVerbraucher (zuVerbrauchen, cycle, battLaderFrei, aussentemp, autoBoden, autoBoiler, autoPool, corrFactorBatt, auto12VBatt):
+def setzeVerbraucher (zuVerbrauchen, cycle, battLaderFrei, aussentemp, autoBoden, autoBoiler, corrFactorBatt):
 
     global gHoldcycleSolarPumpe
     global gHoldcycleFilterPumpe
-    global poolDueToSolar
-    global gcycleFilterPumpeOn
-    
     PACOffset = 50                           # zuVerbrauchen fuer zählerungenauigkeit bzw. totzeit.
     
     
@@ -448,14 +364,13 @@ def setzeVerbraucher (zuVerbrauchen, cycle, battLaderFrei, aussentemp, autoBoden
         s=s+"+ "
         
     
-    if auto12VBatt:
-        if battLaderFrei:
-            ss, vv = setWithHyst(zuVerbrauchen, PACOffset+1000*steckdoseVerbrauch, 10, -8, kellerschalter) #steckdose, battlader
-            s+=ss
-            verbraucht+=vv
+    if battLaderFrei:
+        ss, vv = setWithHyst(zuVerbrauchen, PACOffset+1000*steckdoseVerbrauch, 10, -8, kellerschalter) #steckdose, battlader
+        s+=ss
+        verbraucht+=vv
 
-    if (aussentemp > 10) and autoPool:
-        if cycle > gHoldcycleFilterPumpe and not poolDueToSolar:
+    if SOMMER:        
+        if cycle > gHoldcycleFilterPumpe:
             ss, vv = setWithHyst(corrFactorBatt + zuVerbrauchen - verbraucht, PACOffset+1000*filterPumpeVerbrauch, 100, 2, kellerschalter) #filter
             s+=ss
             verbraucht+=vv
@@ -585,68 +500,23 @@ def toggleForButton1():
     print ("toggleForButton1: set %s to %s " %(dp, str(stat)))
     
 
-
-#-------------------------------------------------------------------------------------
-#
-def checkTimer (timeOn, timeOff):
-
-    rv = False
-    
-    now = datetime.datetime.now()
-    if (now > timeOn) and (now < timeOff):
-        rv = True
-        
-    return rv
-
-#-------------------------------------------------------------------------------------
-#
-def execTimerPool(auto, oldAuto, onOffSwitch, timerActive):
-    rv = False
-    
-    txt = {1: "SolarPumpe", 2: "PoolFilter"}
-    if auto:
-        oldPoolState=myRead("ETH/"+kellerschalter+"/"+str(onOffSwitch), "kellerraspi:8000")
-        #print ("oldpoolstate is %s type %s"%(str(oldPoolState), str(type(oldPoolState))))
-        #print("read kellerschalter %s oldPoolState is %s " % (str(onOffSwitch), str(oldPoolState)))
-        if timerActive:
-            # Pumpe oder wasser ein
-            myWrite("ETH/"+kellerschalter+"/"+str(onOffSwitch), 1, "kellerraspi:8000")
-            if oldPoolState == 0 and oldPoolState != True:
-                setMainMessage("%s - ein" % (txt[onOffSwitch]))
-            rv = True
-        else:
-            # pool aus
-            myWrite("ETH/"+kellerschalter+"/"+str(onOffSwitch), 0, "kellerraspi:8000")
-            if oldPoolState != 0 and oldPoolState != False:
-                setMainMessage("%s - aus" % (txt[onOffSwitch]))
-
-    else: #sicherheitshalber einmal ausschalten
-        if oldAuto != auto:
-            # Pumpe oder wasser aus
-            myWrite("ETH/"+kellerschalter+"/"+str(onOffSwitch), 0, "kellerraspi:8000")
-            setMainMessage("%s - manuell" % txt[onOffSwitch])
-
-    return rv
-
 #-------------------------------------------------------------------------------------
 #
 #
-def execTimerWasser(auto, oldAuto, offSwitch, onSwitch, timerActive):
-
-    rv = False
-    
+def execTimerWasser(auto, oldAuto, offSwitch, onSwitch, timeWaterOn, timeWaterOff):
     txt = {13: "Wasser", 15: "Buesche"}
                 
     if auto:
+        now = datetime.datetime.now()
         oldWasserState=myRead("ETH/"+keller2+"/"+str(onSwitch), "kellerraspi:8000")
         #print("read keller2 %s oldWasserState is %s " % (str(onSwitch), str(oldWasserState)))
-        if timerActive:
+        
+        if (now > timeWaterOn) and (now < timeWaterOff):
             # wasser ein
             myWrite("ETH/"+keller2+"/"+str(onSwitch), 1, "kellerraspi:8000")
             myWrite("ETH/"+keller2+"/"+str(offSwitch), 0, "kellerraspi:8000")
             if oldWasserState != True:
                 setMainMessage("%s - auto - ein" % txt[onSwitch])
-            rv = True
         else:
             # wasser aus
             myWrite("ETH/"+keller2+"/"+str(onSwitch), 0, "kellerraspi:8000")
@@ -659,10 +529,8 @@ def execTimerWasser(auto, oldAuto, offSwitch, onSwitch, timerActive):
             # wasser aus
             myWrite("ETH/"+keller2+"/"+str(onSwitch), 0, "kellerraspi:8000")
             myWrite("ETH/"+keller2+"/"+str(offSwitch), 1, "kellerraspi:8000")
-            setMainMessage("%s - manuell" % txt[onSwitch])
             
-    return rv
-    
+            
 #-------------------------------------------------------------------------------------
 #
 #
@@ -672,11 +540,6 @@ def main():
 
     global gHoldcycleSolarPumpe
     global gHoldcycleFilterPumpe
-    global poolDueToSolar
-    global gcycleFilterPumpeOn
-    
-    poolFilterON = False    
-    poolSolarON = False
 
     stopreason = "unknown"
 
@@ -685,158 +548,132 @@ def main():
         cycle=0          #lifecycle
         gHoldcycleSolarPumpe=0
         gHoldcycleFilterPumpe=0
-        poolDueToSolar=False
         oldWasserState= False
-        oldAutoPool = False
         oldAutoWasser = False
         oldAutoBuesche = False
-        oldPercentLight = 0.0
-        gcycleFilterPumpeOn = -100
-        oldSwitches = [0]*len(gSWITCHES)
-        
         allesAus()
+        
+    
+
         holdcycle=0      #timeout für checkbatteriespannung
+        
         ueberschuss=0    # Regelvariable, die mittels warmwasser und fbh auf null geregelt werden soll
         warmwasserEtc=0  # aktuell eingeschaltete Verbraucher
         
         setMainMessage("Main started")
         oldbutton1 = myRead("VAR/BUTTON1", "kellerraspi:8000")
+        #import web_pdb; web_pdb.set_trace() #debugging
         
-#------------------------------------------------------------------------
-# loop
-        while 1:    
+        while 1:
+        
             button1 = myRead("VAR/BUTTON1", "kellerraspi:8000")
             if (oldbutton1 != button1) :
                 setMainMessage("togglebutton1")
                 toggleForButton1()
+                
             oldbutton1 = button1
-#------------------------------------------------------------------------
-# auto werte ins memory holen.
+            
+            
             # Boiler, Draussen, Wohnzimmer
             autoBoiler = myRead("VAR/AUTOBOILER", "kellerraspi:8000")
             autoBoden = myRead("VAR/AUTOBODEN", "kellerraspi:8000")
-            autoPool = myRead("VAR/AUTOPOOL", "kellerraspi:8000")
-            auto12VBatt = myRead("VAR/AUTO12VBATT", "kellerraspi:8000")
 
-            cycle=cycle+1            
-            st = driverCommon.writeViaWeb("VAR/LIFECYCLE", cycle, "kellerraspi:8000")
+
+            #temps= [temp.read(s) for s in ("/00042b8679ff", "/00042d9aabff", "/00042cb4d4ff")]             
+            #PAC=PV.getTotalPAC()            
+            #PAClist = PV.read("/") # total PAC
             
-            print ("------------------- auto12VBatt is %s" % str(auto12VBatt))
-            if auto12VBatt:
+            #PAClist = driverCommon.read("PV/")
+
+            #PAC=PAClist[1]
+            #s= ( str(datetime.datetime.now())+" " +
+            #   PAClist[0] + " " + str(PAClist[1]) + " " + PAClist[2] + " " +
+            #    ", ".join([temp[0] + " " + str(temp[1]) + " " + temp[2]for temp in temps]) 
+            #   )
+               
+            #reserve =  getReserve()
+            #reserve = getReserveViaZaehler()
+            
+            if autoBoiler or autoBoden:
+                cycle=cycle+1            
+                st = driverCommon.writeViaWeb("VAR/LIFECYCLE", cycle, "kellerraspi:8000")
+                ueberschuss = getUeberschuss() - REGELRESERVE # reserve
+                
                 if holdcycle < cycle:  # andernfalls wird battspannung geregelt!
-                    print ("Check Batt Spannung")
                     holdcycle = checkBattspannung(cycle)
-
-#------------------------------------------------------------------------
-#heizen
-            ueberschuss = getUeberschuss() - REGELRESERVE # reserve
-            aussentemp = getAussentemp()
-            battPercent, battPower, pvPower = getBXState()
-            #
-            # je voller die Batterie ist, desto mehr kann ich abzweigen (linear)
-            # achtung: wenn schaltvorgänge sind, kann die zählerbilanz manchmal auf ein Einspeisung deuten
-            # erweiterung: MINBATCHARGE abhängig von Tageszeit
-            
-            if battPercent < MINBATCHARGE or pvPower < MINPVPOWER or battPower < 0:  # nix zu verschenken.
-                ueberschuss=0
-                corrFactorBatt = 0
+                    
+                if holdcycle > cycle:
+                    battLaderFrei = False
+                else:
+                    battLaderFrei = True
+                
+                aussentemp = getAussentemp()
+                
+                battPercent, battPower, pvPower = getBXState()
+                #
+                # je voller die Batterie ist, desto mehr kann ich abzweigen (linear)
+                # achtung: wenn schaltvorgänge sind, kann die zählerbilanz manchmal auf ein Einspeisung deuten
+                # erweiterung: MINBATCHARGE abhängig von Tageszeit
+                
+                if battPercent < MINBATCHARGE or pvPower < MINPVPOWER or battPower < 0:  # nix zu verschenken.
+                    ueberschuss=0
+                    corrFactorBatt = 0
+                else:
+                    corrFactorBatt = 0
+                    fact = (battPercent-MINBATCHARGE)* (100/MINBATCHARGE) / 100 
+                    corrFactorBatt = battPower * fact
+                    
+                print ("battery State is pvPower %s, percent %s, power %s, corrFactorBatt is %s " %(str(pvPower), str(battPercent), str(battPower), str(corrFactorBatt)))
+                
+                warmwasserEtc = setzeVerbraucher (ueberschuss+warmwasserEtc, cycle, battLaderFrei, aussentemp, autoBoden, autoBoiler, corrFactorBatt)
+                
             else:
-                corrFactorBatt = 0
-                fact = (battPercent-MINBATCHARGE)* (100/MINBATCHARGE) / 100 
-                corrFactorBatt = battPower * fact
+                allesAus()
+                warmwasserEtc = 0
+            
+            while 1:
+                time.sleep(10)
+                autoBoiler = myRead("VAR/AUTOBOILER", "kellerraspi:8000")
+                autoBoden = myRead("VAR/AUTOBODEN", "kellerraspi:8000")
+                autoWasser = myRead("VAR/AUTOWASSER", "kellerraspi:8000")
+                autoBuesche = myRead("VAR/AUTOBUESCHE", "kellerraspi:8000")
                 
-            print ("battery State is pvPower %s, percent %s, power %s, corrFactorBatt is %s " %(str(pvPower), str(battPercent), str(battPower), str(corrFactorBatt)))
-            
-            if holdcycle > cycle:
-                battLaderFrei = False
-            else:
-                battLaderFrei = True
-                
-            warmwasserEtc = setzeVerbraucher (ueberschuss+warmwasserEtc, cycle, battLaderFrei, aussentemp, autoBoden, autoBoiler, autoPool, corrFactorBatt, auto12VBatt)
+                if oldAutoWasser != autoWasser:
+                    setMainMessage("Wasser - %s" % ("auto" if autoWasser else "manual"))
+                    
+                if oldAutoBuesche != autoBuesche:
+                    setMainMessage("Buesche - %s" % ("auto" if autoWasser else "manual"))
+                    
+                now = datetime.datetime.now()
+                timeWaterOn = datetime.datetime(now.year, now.month, now.day, 6,0,0)
+                timeWaterOff = datetime.datetime(now.year, now.month, now.day, 7,0,0)
+                execTimerWasser(autoWasser, oldAutoWasser, 14,13, timeWaterOn, timeWaterOff)
+                execTimerWasser(autoBuesche, oldAutoBuesche, 16,15, timeWaterOn, timeWaterOff)
 
-#------------------------------------------------------------------------
-#pool pumpen 3min pro stunde
-#filterpumpe einschalten, wenn solarpumpe durch regelung eingeschaltet hat (nicht durch den switch).
-#
-#
-            now = datetime.datetime.now()
-            if now.minute > 56:
-                timerActive = True
-            else:
-                timerActive = False
-                
-            a = myRead ("ETH/KELLER2/A7", "kellerraspi:8000")               
-            b = myRead("ETH/KELLERSCHALTER/1", "kellerraspi:8000") #solarschalter
-            #solarpumpe läuft, aber nicht durch schalter eingeschaltet
-            solarreglerActive = (a>1 and a<1000) and not b
-            
-            autoPool = myRead("VAR/AUTOPOOL", "kellerraspi:8000")
-            
-            if oldAutoPool != autoPool:
-                setMainMessage("Pool Filter - %s" % ("auto" if oldAutoPool else "manual"))
-                
-            if autoPool:   #damit uns die eigenverbrauchslogik nicht in die Suppe spuckt.
-                poolDueToSolar=solarreglerActive
-            
-            if (solarreglerActive or aussentemp < 0 or poolFilterON):
-                poolFilterON = execTimerPool(autoPool, oldAutoPool, 2, timerActive or solarreglerActive)
+                timeWaterOn = datetime.datetime(now.year, now.month, now.day, 19,0,0)
+                timeWaterOff = datetime.datetime(now.year, now.month, now.day, 20,0,0)
+                execTimerWasser(autoWasser, oldAutoWasser, 14,13,timeWaterOn, timeWaterOff)
+                execTimerWasser(autoBuesche, oldAutoBuesche, 16,15, timeWaterOn, timeWaterOff)
+                        
+                oldAutoWasser = autoWasser
+                oldAutoBuesche = autoBuesche
 
-            if (aussentemp > 5 or poolSolarON): #solarpumpe
-                poolSolarON = execTimerPool(autoPool, oldAutoPool, 1, timerActive)
-                
-            #check if pool runs for at least 5 minutes
-            if myRead("ETH/KELLERSCHALTER/2", "kellerraspi:8000"): #filterpumpe
-                if -100 == gcycleFilterPumpeOn:
-                    gcycleFilterPumpeOn = cycle
-                if (( gcycleFilterPumpeOn > 0) and (gcycleFilterPumpeOn + 30) < cycle): # Pumpe läuft 5 minuten(?)
-                    t = myRead ("TEMP/00042cb564ff", "raspi:8000") # poolVorlauf (nur gültig wenn pumpe min 5 min gelaufen.
-                    myWrite("VAR/POOLTEMP", t, "kellerraspi:8000")                    
-                    #print ("set pooltemp to %f" %  t)
-            else:
-                gcycleFilterPumpeOn = -100
-                
-            #print ("gcycleFilterPumpeOn is %d" % gcycleFilterPumpeOn)
+                if  autoBuesche or autoWasser or autoBoiler or autoBoden:   # kann ich nun damit unterbrechen und manuell bedienen.
+                    break
+                allesAus()
+                setMainMessage("auto - off")
 
-#bewässern
-#--------------------
-            autoWasser = myRead("VAR/AUTOWASSER", "kellerraspi:8000")
-            if oldAutoWasser != autoWasser:
-                setMainMessage("Wasser - %s" % ("auto" if autoWasser else "manual"))
-            now = datetime.datetime.now()
-            timeWaterOn = datetime.datetime(now.year, now.month, now.day, 7,0,0)
-            timeWaterOff = datetime.datetime(now.year, now.month, now.day, 7,5,0)
-            timerActive = checkTimer(timeWaterOn, timeWaterOff)
-            
-            timeWaterOn = datetime.datetime(now.year, now.month, now.day, 19,55,0)
-            timeWaterOff = datetime.datetime(now.year, now.month, now.day, 20,0,0)
-            timerActive = timerActive or checkTimer(timeWaterOn, timeWaterOff)
-            execTimerWasser(autoWasser, oldAutoWasser, 14,13, timerActive)
-            
-
-
-#--------------------
-            autoBuesche = myRead("VAR/AUTOBUESCHE", "kellerraspi:8000")
-            if oldAutoBuesche != autoBuesche:
-                setMainMessage("Buesche - %s" % ("auto" if autoBuesche else "manual"))
-            timeWaterOn = datetime.datetime(now.year, now.month, now.day, 7,0,0)
-            timeWaterOff = datetime.datetime(now.year, now.month, now.day, 7,5,0)
-            timerActive = checkTimer(timeWaterOn, timeWaterOff)
-            
-            timeWaterOn = datetime.datetime(now.year, now.month, now.day, 19,55,0)
-            timeWaterOff = datetime.datetime(now.year, now.month, now.day, 20,0,0)
-            timerActive = timerActive or checkTimer(timeWaterOn, timeWaterOff)
-            execTimerWasser(autoBuesche, oldAutoBuesche, 16,15, timerActive)
-#--------------------
-
-
-            oldAutoPool = autoPool
-            oldAutoWasser = autoWasser
-            oldAutoBuesche = autoBuesche
-            
-            oldPercentLight, oldSwitches = handleWohnzimmer(oldPercentLight, oldSwitches)
-
-            time.sleep(5)
-
+                while not autoWasser and not autoBuesche and not autoBoden and not autoBoiler:
+                    if not (holdcycle < cycle):
+                        holdCycle = (2 * cycle) - checkBattspannung(cycle)  # wird trotzdem geregelt!
+                    time.sleep(10)
+                    autoBoiler = myRead("VAR/AUTOBOILER", "kellerraspi:8000")
+                    autoBoden = myRead("VAR/AUTOBODEN", "kellerraspi:8000")
+                    autoWasser = myRead("VAR/AUTOWASSER", "kellerraspi:8000")
+                    autoBuesche = myRead("VAR/AUTOBUESCHE", "kellerraspi:8000")
+                    cycle=cycle + 1
+                    st = driverCommon.writeViaWeb("VAR/LIFECYCLE", cycle, "kellerraspi:8000")
+                setMainMessage("auto - on")
 
     except KeyboardInterrupt:
         stopreason="KeyboardInterrupt"
@@ -850,7 +687,7 @@ def main():
     #st = driverCommon.writeViaWeb("VAR/mainMessage/text", "main stopped", "kellerraspi:8000")
     setMainMessage("main stopped(%s)" % stopreason)
        
-    logging.debug('main stopped(%s)' % stopreason)
+    logging.debug('main stopped(%s)' % stopreason)        
     setEVStatus("main stopped (%s)" % stopreason)
 
 

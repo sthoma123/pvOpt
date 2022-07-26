@@ -1,4 +1,7 @@
 #!/usr/bin/python3
+# -*- coding: UTF-8 -*-
+# probe for umlauts: öäüÖÄÜß
+print ("imported " + __name__)
 
 import os, glob, time, sys, datetime, re
 #import cache
@@ -81,5 +84,5 @@ def main():
 
 if __name__ == "__main__":
     with config.configClass() as configuration:
-        globals.gConfig= configuration
+        globals.config= configuration
         main()

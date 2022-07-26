@@ -1,4 +1,6 @@
 #!/usr/bin/python3
+# -*- coding: UTF-8 -*-
+# probe for umlauts: öäüÖÄÜß
 #
 #  readHealth.py 
 #  reads 
@@ -18,6 +20,7 @@
 #
 # or see http://www.isendev.com/app/entry/39
 #
+print ("imported " + __name__)
 
 import os, glob, time, sys, datetime
 import globals
@@ -46,7 +49,7 @@ def write(dp, value, dummy = None):
 #
 @logged(logging.DEBUG)
 def getList(dp):
-    rv = ["CPU", "DISK", "RAM", "PROC"]
+    rv = ["CPU", "DISK", "RAM", "PROC", "UPTIME", "UPTIMESERVICE"]
     return rv
 
 
@@ -104,10 +107,7 @@ def getCPU(interv):
 #   reads the uptime of computer (time since start of process id 1)
 #
 @logged(logging.DEBUG)
-def getUpTime(dummy):
-
-    #//p = psutil.Process(os.getpid())
-    p = psutil.Process(1)
+def _getUpTime(p):
 
     secs = time.time() - p.create_time()    
     #rv = str(datetime.timedelta(seconds=int(secs)))
@@ -118,6 +118,22 @@ def getUpTime(dummy):
     #print ("uptime is %s " % str(datetime.timedelta(seconds=int(secs))))  #time.strftime("%Y-%m-%d %H:%M:%S", rv)
     
     return rv
+
+#----------------------------------------------------------------------------------------------------
+# getUpTimeService():
+#   reads the uptime of computer (time since start of process id 1)
+#
+@logged(logging.DEBUG)
+def getUpTimeService(dummy):
+    p = psutil.Process(os.getpid())
+    #return "%s sec for process %s" %(str(_getUpTime(p)), str(p))
+    return _getUpTime(p)
+
+
+def getUpTime(dummy1):
+    p = psutil.Process(1)
+    #return "%s sec for process %s" %(str(_getUpTime(p)), str(p))
+    return _getUpTime(p)
 
 
     #----------------------------------------------------------------------------------------------------
@@ -225,7 +241,7 @@ def read(dp):
     else:
         dpList=dp
 
-    rv = metadata.read("HEALTH/" + dp.upper())
+    rv = metadata.read("HEALTH/" + dp.upper(), "HEALTH/" + dp.upper())
 
     try:        
         if dp is None:
@@ -257,6 +273,8 @@ def read(dp):
             rv[0]= rv[0] + " " + whichpath
         elif what == "UPTIME":
             result = getUpTime(what1)
+        elif what == "UPTIMESERVICE":
+            result = getUpTimeService(what1)
         elif what == "RAM":
             result = getRAM(what1)
         elif what == "PROC":
@@ -336,9 +354,17 @@ def main():
             s = "%s: %5.3f %s, %s" %(rv[0] , rv[1], rv[2], rv[4])
             print (s)
 
-        if True:
+        if False:
             rv = read ("PROC/main.py")
             s = "%s: %s %s, %s" %(rv[0] , rv[1], rv[2], rv[4])
+            print (s)
+
+        if True:
+            rv = read ("UPTIMESERVICE/R")
+            s = "%s: %s %s, %s, %s" %(rv[0] , rv[1], rv[2], rv[3], rv[4])
+            print (s)
+            rv = read ("UPTIME")
+            s = "%s: %s %s, %s, %s" %(rv[0] , rv[1], rv[2], rv[3], rv[4])
             print (s)
         
         if False:

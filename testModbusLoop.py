@@ -1,5 +1,7 @@
 #!/usr/bin/python3
-
+# -*- coding: UTF-8 -*-
+# probe for umlauts: öäüÖÄÜß
+print ("imported " + __name__)
 import minimalmodbus
 
 instrument=0

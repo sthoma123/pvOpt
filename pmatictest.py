@@ -1,4 +1,6 @@
 #!/usr/bin/python3
+# -*- coding: UTF-8 -*-
+# probe for umlauts: öäüÖÄÜß
 
 import pmatic
 ccu = pmatic.CCU (address="192.168.0.189", credentials=("Admin", ""))

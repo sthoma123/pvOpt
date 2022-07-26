@@ -1,3 +1,8 @@
+#!/usr/bin/python3
+# -*- coding: UTF-8 -*-
+# probe for umlauts: öäüÖÄÜß
+print ("imported " + __name__)
+
 import traceback
 import serial
 import modbus_tk.defines as tkCst

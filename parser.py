@@ -1,3 +1,5 @@
+# -*- coding: UTF-8 -*-
+# probe for umlauts: öäüÖÄÜß
 
 def myParser(s):
     def parseHelper(level=0):

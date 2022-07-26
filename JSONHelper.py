@@ -1,4 +1,7 @@
 #!/usr/bin/python3
+# -*- coding: UTF-8 -*-
+# probe for umlauts: öäüÖÄÜß
+print ("imported " + __name__)
 
 import re
 import json
@@ -101,7 +104,7 @@ def encodeParm(parm):
     return urllib.parse.quote(rv)
     
 #------------------------------------------------------
-# encodeParm
+# encode
 #
 # wasauch immer als parm daherkommt wird als String aufbereitet.
 #
@@ -112,13 +115,14 @@ def _encode(parm):
 
     rv = ""
     
-    if type(parm) is int:
-        rv=str(parm)
-    elif type(parm) is float:
-        rv=str(parm)    
-    elif type (parm) is str:
-        rv=parm    
-    elif type(parm) is datetime.datetime:
+    #if type(parm) is int:  #dumps handles all of those correctly:
+    #    rv=str(parm)
+    #elif type(parm) is float:
+    #    rv=str(parm)    
+    #elif type (parm) is str:
+    #    rv=parm    
+    #elif type(parm) is datetime.datetime:
+    if type(parm) is datetime.datetime:
         rv=parm.isoformat("T")    # old firefox requires a "T" as separator (hope it is Ok for all other readers
     else:
         rv =json.dumps(parm, default=JSONDateTimeHandler)   
@@ -129,7 +133,6 @@ def _encode(parm):
 # decode
 #
 # kriege irgendetwas als String
-# currently string, int, float and date are supported.
 #
 
 @logged(logging.DEBUG)
@@ -138,6 +141,9 @@ def _decode(s):
     #print ("decodeParm gets ", s)
 
     if type(s) is str:        
+        s = s.replace("\r","")
+        s = s.replace("\n","")
+    
         if len(s)>0:
             try:
                 if  re.search("\A-*\d+[.]\d*\Z", s):   #float  
@@ -154,19 +160,30 @@ def _decode(s):
                 elif re.search("\A\d{4,4}-\d\d-\d\d\D\d\d:\d\d:\d\d(\.\d+)?Z?\Z", s):
                     rv = JSON2pyDateTime(s, DATE_FORMAT_milli)
                    
-                elif re.search("\A[\[{(].+[])}]\Z", s):  # json objekte: list/tuple/dict 
+                elif re.search("\A[\\\"\[{(].*[])}\\\"]\Z", s):  # json objekte: list/tuple/dict/string 
                     #print ("match date")
                     #print ("decodeParm recognizes JSON")
                     #print ("decodeParm JSON1: ", s, str(type(s)))
                     rv = json.loads(s)
                     #print ("decodeParm JSON2: ", rv, str(type(rv)))
-                    rv = JSONdatetime_parser(rv)
+                    rv = JSONdatetime_parser(rv)  #adjust datetime
                     #print ("decodeParm JSON3: ", rv, str(type(rv)))
-                else:
-                    #print ("decodeParm recognizes nothing, durchschleifen")
+                elif s=="null":
+                    rv = None
+                else: #string without "", return as-is
                     rv = s
-            except:
-                logging.exception("decodeParm has problems with %s", s)
+                    # json objects perhaps string
+                    #print ("decodeParm recognizes nothing, standard json handling")
+                    #if sending a list or dict per json, the following is contraproductive,
+                    #unfortunately the regular expression does not always fit...
+                    #rv=json.loads('"'+s+'"')
+                    #rv=json.loads(s)  #testing
+                    #or: print ("decodeParm recognizes nothing, durchschleifen")
+                    #'rv = s
+            except Exception as e:
+                msg = "Exception decodeParm of %s %s, %s" % (s, type(e).__name__, e.args)
+                logging.exception(msg)
+                raise (RuntimeError(msg))
 
     #print("_decode returning %s" % str(rv))
     
@@ -189,12 +206,12 @@ def decodeParm(parm):
 
     if type(parm) is str:
         s = urllib.parse.unquote(parm)
-        #strip unnecessary double quotes (coming from javascript)
+        #double quotes are a hint for JSON, so not strip 
         if len(s)>0:
-            if s[0]=="\"":
-                s = s[1:]
-            if s[-1]=="\"":
-                s = s[:-1]        
+            #if s[0]=="\"":
+            #    s = s[1:]
+            #if s[-1]=="\"":
+            #    s = s[:-1]        
             rv = _decode(s)
         
     #print ("decodeParm returns ", rv)

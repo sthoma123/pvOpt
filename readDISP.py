@@ -1,6 +1,11 @@
 #!/usr/bin/python3
+# -*- coding: UTF-8 -*-
+# probe for umlauts: öäüÖÄÜß
 #
-# f�r das Raspberry standard display (Helligkeit usw.)
+# für das Raspberry standard display (Helligkeit usw.)
+# Achtung: wenn power ausgeschaltet wird, kann der screensaver nicht aufwecken.
+# Achtung: ich kann den Status des Screensaver nicht abfragen, d.h. ich weiß nicht ob der Schirm eingeschaltet ist
+# Achtung: ich vermute, dass das ausschalten des screensaver nicht möglich ist?
 #
 #
 #
@@ -14,6 +19,7 @@ Ships with a CLI, GUI and Python API.
 :License: MIT license
 """
 #from __future__ import print_function
+print ("imported " + __name__)
 
 import argparse
 import os, glob, time, sys, datetime
@@ -31,11 +37,11 @@ __author__ = "Linus Groh"
 __version__ = "1.7.1"
 PATH = "/sys/class/backlight/rpi_backlight/"
 
+#damit weckt man den Screensaver auf:
+PATHBLANK = "/sys/class/graphics/fb0/"
 
 def _perm_denied():
-    print("This program must be run as root!")
-    sys.exit()
-
+    logging.error("readDISP: access to %s denied" %(PATH))
 
 def _get_value(name):
     try:
@@ -44,11 +50,9 @@ def _get_value(name):
     except PermissionError:
         _perm_denied()
 
-
-def _set_value(name, value):
-    with open(os.path.join(PATH, name), "w") as f:
+def _set_value(name, value, path = PATH):
+    with open(os.path.join(path, name), "w") as f:
         f.write(str(value))
-
 
 def get_actual_brightness():
     """Return the actual display brightness.
@@ -106,130 +110,107 @@ def set_brightness(value, smooth=False, duration=1):
     else:
         _set_value("brightness", value)
 
-
 def set_power(on):
     """Set the display power on or off.
 
     :param on: Boolean whether the display should be powered on or not
     """
     try:
+        #print ("setting power to inverted %s -> %s " %(str(on), str(int(not on))))
         _set_value("bl_power", int(not on))
     except PermissionError:
         _perm_denied()
 
-
-def cli():
-    """Start the command line interface."""
-    parser = argparse.ArgumentParser(
-        description="Control power and brightness of the "
-                    "official Raspberry Pi 7\" touch display.")
-    parser.add_argument("-b", "--brightness", metavar='VALUE',
-                        type=int, choices=range(11, 256),
-                        help="set the display brightness to VALUE (11-255)")
-    parser.add_argument("-d", "--duration", type=int, default=1,
-                        help="fading duration in seconds")
-    parser.add_argument("-s", "--smooth", action='store_true',
-                        help="fade the display brightness, see -d/--duration")
-    parser.add_argument("--on", action='store_true',
-                        help="set the display powered on")
-    parser.add_argument("--off", action='store_true',
-                        help="set the display powered off")
-    parser.add_argument("--max-brightness", action='store_true',
-                        help="get the maximum display brightness")
-    parser.add_argument("--actual-brightness", action='store_true',
-                        help="get the actual display brightness")
-    parser.add_argument("--power", action='store_true',
-                        help="get the current power state")
-    args = parser.parse_args()
-
-    if all(arg in (False, None) for arg in (
-            args.off, args.on, args.brightness, args.max_brightness,
-            args.actual_brightness, args.power)):
-        parser.print_help()
-
-    if args.off is True:
-        set_power(False)
-
-    if args.on is True:
-        set_power(True)
-
-    if args.brightness:
-        set_brightness(args.brightness, args.smooth, args.duration)
-
-    if args.max_brightness:
-        print(get_max_brightness())
-
-    if args.actual_brightness:
-        print(get_actual_brightness())
-
-    if args.power:
-        print(get_power())
-
-
-def gui():
-    """Start the graphical user interface."""
+def setBlank(on):
     try:
-        import gi
-        gi.require_version("Gtk", "3.0")
-        from gi.repository import Gtk
-    except ImportError:
-        print("Sorry, this needs pygobject to be installed!")
-        sys.exit()
-
-    win = Gtk.Window(title="Set display brightness")
-
-    ad1 = Gtk.Adjustment(value=get_actual_brightness(), lower=11, upper=255)
-    scale = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=ad1)
-
-    def on_scale_changed(s, _):
-        value = int(s.get_value())
-        set_brightness(value)
-
-    scale.connect("button-release-event", on_scale_changed)
-    scale.connect("key_release_event", on_scale_changed)
-    scale.connect("scroll-event", on_scale_changed)
-    scale.set_size_request(350, 50)
-
-    # Main Container
-    main_container = Gtk.Fixed()
-    main_container.put(scale, 10, 10)
-
-    # Main Window
-    win.connect("delete-event", Gtk.main_quit)
-    win.connect("destroy", Gtk.main_quit)
-    win.add(main_container)
-    win.resize(400, 50)
-    win.set_position(Gtk.WindowPosition.CENTER)
-
-    win.show_all()
-    Gtk.main()
-
+        print ("setting blank to inverted %s -> %s " %(str(on), str(int(not on))))
+        _set_value("blank", int(not on), PATHBLANK)
+        
+    except PermissionError:
+        _perm_denied()
+        
+#----------------------------------------------------------------------------------------------------
+# write operator:
+def handleOperator(a, b, operator):
+    rv = 0
+    if type(a) in [int, float, bool]:
+        if operator == "ADD":
+            rv = a + b
+        elif operator == "SUB":
+            rv = a - b
+        elif operator == "MUL":
+            rv = a - b
+        elif operator == "DIV":
+            rv = a - b
+        else:  #here comes the bitwise operators:
+            a = int(a)
+            b = int(b)
+            if operator == "XOR":
+                rv = a ^ b        
+            elif operator == "OR":
+                rv = a | b        
+            elif operator == "AND":
+                rv = a & b
+    else:
+        logging.error ("readDISP handleOperator got wrong datatype %s returning 0" % (str(type(a))))
+    
+    
+    #print ("+++ handleOperator %s = %s %s %s" % (str(rv), str(a), operator, str(b)))
+    
+    return rv
+    
 #----------------------------------------------------------------------------------------------------
 # write:
 #   stores a variable in globals.var dictionary
 #
 @logged(logging.DEBUG)
 def write(dp, value, dummy=None):  #3rd parameter needed for some other writes...
+    #import web_pdb; web_pdb.set_trace() #debugging
 
-    rv = list()
-    
     #print ("varWrite got %s, value %s " % (str(dp), str(value)))
     
+    cmdList=["ADD", "SUB", "XOR", "OR", "AND", "MUL", "DIV"]
+    operator = "SET"
     if type(dp) is str:
         dpList=dp.split('/')
     else:
         dpList=dp
         
+    if dpList[0] in cmdList:
+        operator=dpList[0]
+        dpList=dpList[1:]
+    
     dp="/".join(dpList)
-    if dp == "POWER":
+
+    #    print ("varWrite step 2 %s, value %s " % (str(dp), str(value)))
+    
+    rv = metadata.read("DISP/" + dp, "DISP/" + dp)
+    
+    if operator in cmdList:
+        rv = read(dp)
+        value = handleOperator(rv[1], value, operator)
+
+    stat = "Ok"
+    r=0    
+
+    if dp == "BLANK":
+        setBlank(value)
+        
+    elif dp == "POWER":
         set_power(value)
+        r = get_power()
+        
     elif dp == "BRIGHT":
         set_brightness(value)
+        r = get_actual_brightness()
+        
     else:
-        logging.error("readDISP.read got wrong datapoint.")
-        stat = "Error wrong dp"
+        logging.error("readDISP.read got wrong datapoint: %s " % (dp))
+        stat = "Error"
+        r = 0
 
-    #print ("varWrite step 3 rv %s, value %s " % (str(rv), str(value)))
+    rv[1] = r
+    rv[5] = stat
 
     return rv
 
@@ -255,11 +236,12 @@ def read(dp):
             logging.error("readDISP.read got empty datapoint.")
             
         stat = "Ok"
-        if dp == "POWER" :
+        if dp == "BLANK" :
             r = get_power()
-        
+        elif dp == "POWER" :
+            r = get_power()
         elif dp == "BRIGHT" :        
-            r = get_actual_brightness
+            r = get_actual_brightness()
         else:
             logging.error("readDISP.read got wrong datapoint.")
             stat = "Error wrong dp"
@@ -281,22 +263,19 @@ def read(dp):
 #----------------------------------------------------------------------------------------------------
 # MAIN:
 #
-
 #-------------------------------------------------------------------------
 #
 #
 def main():
     with config.configClass() as configuration:
         globals.config= configuration   
-        write ("POWER", True)
-        write ("BRIGHT", 11)
+        print ("write power true %s" % str(write ("POWER", True)))
+        print ("write bright 11 %s" % str(write ("BRIGHT", 11)))
         time.sleep (2)
-        write ("BRIGHT", 100)
+        print ("write bright 100 %s" % str(write ("BRIGHT", 100)))
         time.sleep (2)
-        write ("BRIGHT", 200)
+        print ("write bright 200 %s" % str(write ("BRIGHT", 200)))
         
-        #cli()    
-
 
 # Your program goes here.
 # You can access command-line arguments using the args variable.

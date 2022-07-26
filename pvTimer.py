@@ -1,7 +1,9 @@
 #!/usr/bin/python3
+# -*- coding: UTF-8 -*-
+# probe for umlauts: öäüÖÄÜß
 #
 # timer modul wird von server.py gestartet, 
-      
+print ("imported " + __name__)      
 import os, time, datetime, sys, datetime, threading
 import readETH008 as eth008
 import readPV as PV
@@ -21,7 +23,7 @@ globals.shutdown = False
 @logged(logging.DEBUG)
 def getTimerDatapoints(name):
     rv = list()
-    co=globals.config.__dict__
+    co=globals.config.configMap
     dps=""
     k=globals.hostName + "/timer"
     #print ("getTimerDatapoints: search in .ini file: ", k)
@@ -29,9 +31,9 @@ def getTimerDatapoints(name):
         #print ("getTimerDatapoints: found ", k)
         if name in co[k]: # found my timer:
             dpsString = co[k][name]
-            rv = dpsString.split(",")
+            rv = [x.strip() for x in dpsString.split(",")]
 
-    print ("getTimerDatapoints: returned list: ", rv)
+    print ("getTimerDatapoints for timer %s: returned list: %s"% (name, str(rv)))
 
     return rv        
 
@@ -42,7 +44,7 @@ def getTimerDatapoints(name):
 def getTimertriggers(name):
     triggers=dict() #hier die triggerskriterien aus pvOpt.ini einlesen:
     
-    co=globals.config.__dict__
+    co=globals.config.configMap
     #liste alles was in pvopt.ini mit timer/anfaengt:
     k="timer/" + name
     for trigger in co[k]:
@@ -101,7 +103,7 @@ def executeTimer(dpList):
 #--------------------------------------------------------------------------------
 #
 #  implementiert einen Timer
-#  achtung: ist eine Threadfunktion, dahernur lokale Variablen veraendern!
+#  achtung: ist eine Threadfunktion, daher nur lokale Variablen veraendern!
 #
 #
 #----------------------------------------------------------------------------------------------------
@@ -135,7 +137,7 @@ def pvTimerSetUp(dummy):
         #start a thread for every timer:
         timerNameList=list()
         
-        co=globals.config.__dict__
+        co=globals.config.configMap
         #liste alles was in pvopt.ini mit timer/anfaengt:
         for key in co.keys():
             s = key.split("/")
@@ -178,7 +180,7 @@ if __name__ == "__main__":
         globals.config= configuration   
         print ("pvTimer: start - with - debug")
         
-        #logging.basicConfig(filename=globals.config.logfilename,level=logging.DEBUG, format='%(asctime)s--%(name)s--%(levelname)s--%(message)s')        
+        #logging.basicConfig(filename=globals.config.configMap["logfilename"],level=logging.DEBUG, format='%(asctime)s--%(name)s--%(levelname)s--%(message)s')        
         #logging.setLevel(logging.DEBUG)
         logging.getLogger().setLevel(logging.DEBUG)
                 

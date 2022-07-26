@@ -1,5 +1,9 @@
 #!/usr/bin/python3
+# -*- coding: UTF-8 -*-
+# probe for umlauts: öäüÖÄÜß
 # globals for logging und configuration 
+
+print ("imported " + __name__)
 
 import cache as ca
 import config
@@ -8,66 +12,81 @@ import archive
 import socket
 import threading
 
-# fill gConfig
+# create empty sessionContext
 try:
-    print(type(gConfig))
+    dummy=type(gSessionContext)
 except:
-    gConfig = config.configClass()
+    gSessionContext = dict()
+
+    
+# fill config
+try:
+    dummy=type(config)
+except:
+    config = config.configClass()
 
 # fill cache
 try:
-    print(type(cache))
+    dummy=type(cache)
 except:
     cache =  ca.CachedDict()
 
 # fill ethcache
 try:
-    print(type(ethcache))
+    dummy=type(ethcache)
 except:
     ethcache =  ca.CachedDict()
-
+        
 # fill archiveCache
 try:
-    print(type(archiveCache))
+    dummy=type(archiveCache)
 except:
     archiveCache =  ca.CachedDict()
-    print ("ARCHIVECACHE established")
 
 # fill obisConfig
 try:
-    print(type(OBISconfig))
+    dummy=type(OBISconfig)
 except:
   OBISconfig = configparser.ConfigParser()
   OBISconfig.read('/etc/obis.ini')
 
 # fill archive
 try:
-    print(type(gArchive))
+    dummy=type(gArchive)
 except:
     gArchive = archive.archiveClass()
     
 
 # fill MODport
 try:
-    print(type(MODport))
+    dummy=type(MODport)
 except:
     MODport =  dict()
     #l["ID"]=[id]
 
 # fill var (variables)
 try:
-    print(type(var))
+    dummy=type(var)
 except:
     var =  dict()
     var["test"]=21
     #l["ID"]=[id]
 
+# non-persistent logging per datapoint
+# used by dpLogger
+try:
+    dummy=type(dpLog)
+except:
+    dpLog = dict()
+
+
 hostName = socket.gethostname()
 modbusSema = threading.Semaphore() # just 1 thread may use modbus!
 shutdown = False  # used for server to exit (and restart?)
 restart  = False
-modbusQuality  = 100 # restart when zero (decrement by 10 for each read error, increment by 1 for each success)
+modbusQuality  = {} # number of unsuccessfull reads from a device per device
 listOfOpenFiles = []
+listOfOpenFilesLock = threading.Lock()  # to protect listOfOpenFiles
 #eventQueue = False
 
 

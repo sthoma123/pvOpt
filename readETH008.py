@@ -1,4 +1,10 @@
 #!/usr/bin/python3
+# -*- coding: UTF-8 -*-
+# probe for umlauts: öäüÖÄÜß
+
+print ("imported " + __name__)
+
+
 import os, glob, time,  sys, datetime
 import select
 import struct
@@ -181,7 +187,11 @@ def read_voltage_raw(box): #network name of device
             if type(rv) is bytes:
                 if len(rv) > 5: 
                     rv = rv[5]
-
+                else:
+                    rv = 0
+                    s="readETH008 read_voltage_raw: box %s inputNumber (%d) > bufferLen (%d) returned" % (box, len(rv), 5)
+                    print (s)
+                    raise Exception(s)
         
     return rv/10
     
@@ -202,7 +212,12 @@ def read_analog_raw (box, inputNr):
             if type(rv) is bytes:
                 i=inputNr*2
                 if len(rv) > (i): 
-                    rv = rv[i]*256 + rv[i+1]    
+                    rv = rv[i]*256 + rv[i+1]
+                else:
+                    s="readETH008 read_analog_raw: box %s inputNumber (%d) >= bufferLen (%d) returned" % (box, len(rv)/2, inputNr)
+                    print (s)
+                    raise Exception(s)
+                    rv = 0
                     
     return rv
 
@@ -224,8 +239,8 @@ def read1relais(box, number): #network name of device
     
     if x is not None:
         all = [0!=(1<<p)&x for p in range(0,24)]
-        if not (len(globals.config.Schalter)<number) :
-            s=globals.config.Schalter[number-1]
+        if not (len(globals.config.configMap["Schalter"])<number) :
+            s=globals.config.configMap["Schalter"][number-1]
         else:
             #s="Switch %d" % (number)
             s=""
@@ -287,6 +302,9 @@ def set_relais (box, switch, state, pulse=None):
           message = b'\x20'
         else:
           message = b'\x21'
+        if pulse > 255:
+            logging.error("Pulse > 255: it is %d for box %s switch %d" % (pulse, box, switch))
+            pulse = 255
         message += bytes([switch]) + bytes([pulse]) ## b"\x00"   #pulsdauer        
     else: # new Board
         #new box: 0x31 ; SR, Set Relay - relay num, state, pulse time/state (4 bytes), total 7 byte command
@@ -378,60 +396,65 @@ def read(dp):
     while len(dpList) < 2:  # brauche zumindest 2 elemente, auch wenn sie leer sind!
         dpList = dpList + [""]
         
-    box=dpList[0]
-    if dpList[1] == "":     # lese ganzes Byte aus
-        o = read_relais(box)
-        if o is None:
-            rv[5] = "Timeout"
-        else:
-            rv[1] = o
-            rv[3] = datetime.datetime.now()
-            rv[5] = "Ok"
-    else:
-        if dpList[1][0] == "V":  # read voltage
-            r=readVoltage(box)
-            if r is None:
+    try:
+        box=dpList[0]
+        if dpList[1] == "":     # lese ganzes Byte aus
+            o = read_relais(box)
+            if o is None:
                 rv[5] = "Timeout"
             else:
-                rv[1] = r
-                rv[3] = datetime.datetime.now()
-                rv[5] = "Ok"
-        elif dpList[1][0] == "A":  # read analog
-            inputNr = 0
-            try:
-                inputNr=dpList[1][1:]
-            except:
-                pass
-                
-            r=readAnalog(box, inputNr)
-            if r is None:
-                rv[5] = "Timeout"
-                rv[3] = datetime.datetime.now()
-            else:
-                rv[1] = r
+                rv[1] = o
                 rv[3] = datetime.datetime.now()
                 rv[5] = "Ok"
         else:
-            i=1
-            if dpList[i]=="XOR":  #wird beim Lesen ignoriert.
-                i=i+1
-            switch = int(dpList[i])
-        
-            r=read1relais(box, switch)
-            
-            rv[3] = datetime.datetime.now()
-            if r is None:
-                rv[5] = "Timeout"
-            else:
-                rv[1] = r[1]
-                if r[0] != "":
-                    rv[0] = r[0]
+            if dpList[1][0] == "V":  # read voltage
+                r=readVoltage(box)
+                if r is None:
+                    rv[5] = "Timeout"
+                else:
+                    rv[1] = r
+                    rv[3] = datetime.datetime.now()
+                    rv[5] = "Ok"
+            elif dpList[1][0] == "A":  # read analog
+                inputNr = 0
+                try:
+                    inputNr=dpList[1][1:]
+                except:
+                    pass
                     
-                if rv[0] == "":
-                   rv[0]="Switch %d" % (switch)
-                   
-                #rv =  r + ["", datetime.datetime.now(), "ETH/"+dpList[0]+"/"+str(switch), "Ok"]                    
-                rv[5] = "Ok"
+                r=readAnalog(box, inputNr)
+                if r is None:
+                    rv[5] = "Timeout"
+                    rv[3] = datetime.datetime.now()
+                else:
+                    rv[1] = r
+                    rv[3] = datetime.datetime.now()
+                    rv[5] = "Ok"
+            else:
+                i=1
+                if dpList[i]=="XOR":  #wird beim Lesen ignoriert.
+                    i=i+1
+                switch = int(dpList[i])
+            
+                r=read1relais(box, switch)
+                
+                rv[3] = datetime.datetime.now()
+                if r is None:
+                    rv[5] = "Timeout"
+                else:
+                    rv[1] = r[1]
+                    if r[0] != "":
+                        rv[0] = r[0]
+                        
+                    if rv[0] == "":
+                       rv[0]="Switch %d" % (switch)
+                       
+                    #rv =  r + ["", datetime.datetime.now(), "ETH/"+dpList[0]+"/"+str(switch), "Ok"]                    
+                    rv[5] = "Ok"
+    except Exception as e:
+        logging.exception ( "ETH: problem with %s" % (dp))
+        rv= "Exception %s, %s" % (type(e).__name__, e.args), 0, "~" , datetime.datetime.now() , "ETH/%s" %(dp), "Exception"
+        
 
     #print ("readETH008::read finished " + dp + " returned " + str(rv))
     
@@ -571,8 +594,8 @@ def start_ETHserver(port):
         globals.shutdown = True
         globals.restart = True
         
-    logging.error("finishing serverthread")
-    print ("finishing serverthread")
+    logging.error("finishing ETHServer serverthread")
+    print ("finishing ETHServer serverthread")
 
 
 #----------------------------------------------------------------------------------------------------
@@ -676,7 +699,7 @@ def main() :
     #print (s)
     #sys.exit()
 
-    #o = [read_relais(devicename) for devicename in globals.config.DeviceSchalter]
+    #o = [read_relais(devicename) for devicename in globals.config.configMap["DeviceSchalter"]]
     #    s=" ".join([" ".join([pp[0]+" is "+str(pp[1])+"; " for pp in p]) for p in o])
     #    print (str(datetime.datetime.now()),  " " , s)
         

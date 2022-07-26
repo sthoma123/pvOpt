@@ -1,7 +1,10 @@
 #!/usr/bin/python3
+# -*- coding: UTF-8 -*-
+# probe for umlauts: öäüÖÄÜß
 #---------------------------------------------------------------------------# 
 # import the various modbus client implementations
 #---------------------------------------------------------------------------# 
+print ("imported " + __name__)
 
 import os, glob, time,  sys, datetime
 import threading
@@ -14,8 +17,6 @@ import logging
 #from pymodbus.client.sync import ModbusSerialClient as ModbusClient
 import minimalmodbus as mmRtu
 import metadata
-
-
 
 #----------------------------------------------------------------------------------------------------
 @logged(logging.DEBUG)
@@ -45,7 +46,7 @@ def openModPort(port):
 
     rv = None
 
-    co=globals.gConfig.__dict__
+    co=globals.config.configMap
     timeout = 0.2
     baudrate=19200
     coKey="MOD/%s" % (port)
@@ -99,7 +100,7 @@ def read_mod_raw(port, modbusID, boxtype, parmname, default):
     rv= None
     retry = 3
         
-    co=globals.gConfig.__dict__
+    co=globals.config.configMap
     slaveID = int(modbusID)
     register = parmname
     datalen = 2
@@ -151,56 +152,67 @@ def read_mod_raw(port, modbusID, boxtype, parmname, default):
     try:
         mmc = openModPort(port)
         if mmc is None:
-            globals.modbusQuality = globals.modbusQuality - 10        
             desc = "mmc=None for %s" % port
             rv= desc, 0, unit , datetime.datetime.now() , dp, "Exception"
-            logging.error("readMOD.py read: %s" % desc)
+            logging.error("readMOD.py open port: %s" % desc)
             
         else:
-            mmc.address = slaveID
-            #val  = mmc.read_register(register, 0)
-            mmc.debug=False
-            
-            #test fuer modbus kommunikation...
-            val = None
-            s = ""
-            while retry > 0:
-                try:
-                    val = mmc.read_float(register, modbusCommand, datalen)
-                    if retry < 3:
-                        logging.error("Retry %d successful for %s, modbusID  %s" % (3-retry, port, str(modbusID)))
-                    if retry < 3:
-                        s = "(" + str(3-retry) + ")"
-
-                    retry = 0
-
-                except IOError as e:
-                    time.sleep(0.1)
-                    retry = retry - 1
-                    logging.error ("readMOD.py Modbus got IOError; retry%d! for %s, modbusID  %s,  %s, %s" %(retry, port, str(modbusID), boxtype, parmname))
-                    
-            if val is None:
-                val = mmc.read_float(register, modbusCommand, datalen)
-            
+            deviceAddr="%s%s"%(port, str(slaveID))  #to index modbusquality
+            if not deviceAddr in  globals.modbusQuality:
+                globals.modbusQuality[deviceAddr]=0
                 
-            rv = (desc,
-                 val, unit, 
-                 datetime.datetime.now() , 
-                 dp, "Ok", s)
-                 
-                 
-            globals.modbusQuality = globals.modbusQuality +1
-            if globals.modbusQuality > 100:
-                globals.modbusQuality = 100
+            #don't even try if there are more than x unsuccessful reads, to speed things up:
+            r = globals.modbusQuality[deviceAddr]
+            if r == 11:
+                logging.error("readMOD.py ignoring %s on %s from now on, too many read errors" % (str(slaveID), port))
+                
+            if (r > 10) and not ((r % 100) == 0):
+                rv= desc, 0, unit + "(exc)", datetime.datetime.now() , dp, "noRetry", "noRetry"
+                globals.modbusQuality[deviceAddr] += 1
+            else:
+                
+                mmc.address = slaveID
+                #val  = mmc.read_register(register, 0)
+                mmc.debug=False
+                
+                #test fuer modbus kommunikation...
+                val = None
+                s = ""
+                while retry > 0:
+                    try:
+                        val = mmc.read_float(register, modbusCommand, datalen)
+                        if retry < 3:
+                            logging.error("Retry %d successful for %s, modbusID  %s" % (3-retry, port, str(modbusID)))
+                        if retry < 3:
+                            s = "(" + str(3-retry) + ")"
+
+                        retry = 0
+
+                    except IOError as e:
+                        globals.modbusQuality[deviceAddr]+=1
+                        time.sleep(0.1)
+                        retry = retry - 1
+                        logging.error ("readMOD.py Modbus got IOError; retry%d (%d)! for %s, modbusID  %s,  %s, %s" %(retry, globals.modbusQuality[deviceAddr], port, str(modbusID), boxtype, parmname))
+                        
+                if val is None:
+                    val = mmc.read_float(register, modbusCommand, datalen)
+                
+                    
+                rv = (desc,
+                     val, unit, 
+                     datetime.datetime.now() , 
+                     dp, "Ok", s)
+                     
+                globals.modbusQuality[deviceAddr] = 0
             
     except Exception as e:
-        logging.exception ("readMOD.py: q: %d read_mod_raw got exception for %s, %s, %s, %s" %(globals.modbusQuality, port, str(modbusID), boxtype, parmname))
+        logging.exception ("readMOD.py: read_mod_raw got exception for %s, %s, %s, %s" %(port, str(modbusID), boxtype, parmname))
         rv= desc, 0, unit + "(exc)", datetime.datetime.now() , dp, "Exception"
         #mmc = globals.MODport[port]
         # delete port (probably broken...)
         #mmc.serial.close()
         #del globals.MODport[port]
-        globals.modbusQuality = globals.modbusQuality - 10
+        globals.modbusQuality[deviceAddr] += 1
     finally:
         pass
         #if not mmc is None:
@@ -208,6 +220,7 @@ def read_mod_raw(port, modbusID, boxtype, parmname, default):
         #        logging.error ("readMOD.py: read: make an explicit close on mmc.serial")
         #        mmc.serial.close()
 
+    #print("globals.modbusQuality= %s"%str(globals.modbusQuality))
     return rv    
     
 #----------------------------------------------------------------------------------------------------
@@ -242,7 +255,7 @@ def read(dp):
             
         # check if there are definitions for this ID in pvOpt.ini file for the box:port/id definition.
         # globals.hostName
-        co=globals.gConfig.__dict__
+        co=globals.config.configMap
         k=globals.hostName + ":MOD/" + dpList[0]
         #print ("MOD.read: search in .ini file: ", k)
         if k in co:
@@ -284,7 +297,6 @@ def read(dp):
 #
 if __name__ == "__main__":
   with config.configClass() as configuration:
-#    gConfig=configuration
     globals.config= configuration
     # print list of available parameters.
 

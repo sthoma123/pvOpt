@@ -1,4 +1,6 @@
 #!/usr/bin/python3
+# -*- coding: UTF-8 -*-
+# probe for umlauts: öäüÖÄÜß
 #
 # konfiguriert Slave-ID eines SDM120. 
 #
@@ -6,6 +8,7 @@
 #
 #
 #
+print ("imported " + __name__)
 import minimalmodbus, sys
 
 serialdevs=('/dev/ttyUSB.modbus',)

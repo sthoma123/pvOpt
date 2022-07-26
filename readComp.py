@@ -1,10 +1,13 @@
 #!/usr/bin/python3
+# -*- coding: UTF-8 -*-
+# probe for umlauts: öäüÖÄÜß
 #
 #  readComp.py 
 #  execute any python calculation based on datapoints:
 #  Usage:
 #      COMP/fuehrungstext/p[0]+p[1]/("PV/PV0", "PV/PV1")
 #  warning: uses eval with it's security impacts.
+print ("imported " + __name__)
 
 import os, glob, time, sys, datetime
 import globals

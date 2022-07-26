@@ -1,4 +1,6 @@
 #!/usr/bin/python3
+# -*- coding: UTF-8 -*-
+# probe for umlauts: öäüÖÄÜß
 #
 #  readDummy.py 
 #  reads / writes datapoints into memory. provides a persistent lastvalue.
@@ -12,6 +14,7 @@
 #  etc.
 #  ADD, MUL, DIV, AND, OR, XOR
 #
+print ("imported " + __name__)
 
 import os, glob, time, sys, datetime
 import globals

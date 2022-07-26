@@ -1,9 +1,14 @@
 #!/usr/bin/python3
+# -*- coding: UTF-8 -*-
+# probe for umlauts: öäüÖÄÜß
+
 #
 # this is the small commanline tool for minimal modbus: 
 # all parms can be given in the commandline, if not the user is prompted.
 #
 #
+print ("imported " + __name__)
+
 import os, glob, time, sys, datetime
 import http, http.client
 import json
@@ -189,7 +194,6 @@ def main():
 #
 if __name__ == "__main__":
   with config.configClass() as configuration:
-#    gConfig=configuration
     globals.config= configuration
     # print list of available parameters.
     

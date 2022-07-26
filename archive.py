@@ -1,5 +1,8 @@
 #!/usr/bin/python3
-
+# -*- coding: UTF-8 -*-
+# probe for umlauts: öäüÖÄÜß
+#  import web_pdb; web_pdb.set_trace() #debugging
+print ("imported " + __name__)
 
 #todo:
 # max, min avg, 
@@ -8,6 +11,8 @@
 #
 
 import os, glob, time, sys, datetime, re
+import psutil
+
 #import cache
 import config
 import driverCommon
@@ -125,7 +130,7 @@ class archiveFileClass:
         self.lastData=[self.timestamp, -99.9]  #default for empty file.
         self.fileSize=0
         
-        co=globals.gConfig.__dict__
+        co=globals.config.configMap
         self.compress = 0.0
         self.timeCompress = ""
         
@@ -218,16 +223,30 @@ class archiveFileClass:
                 pass
             
         try:
-            if len(globals.listOfOpenFiles) > 100: #close older files
-                for f in globals.listOfOpenFiles[0:10]:
-                    if not f.file is None:
-                        #print ("number of Open file too big, closing %s " % f.filename)
-                        f.close()
-                globals.listOfOpenFiles=globals.listOfOpenFiles[10:]        
+            with globals.listOfOpenFilesLock:
+                if len(globals.listOfOpenFiles) > 100: #close older files
+                    for f in globals.listOfOpenFiles[0:10]:
+                        if not f.file is None:
+                            #print ("number of Open file too big, closing %s " % f.filename)
+                            try:
+                                f.close()
+                            except:
+                                pass #ignore if file already closed.
+                    globals.listOfOpenFiles=globals.listOfOpenFiles[10:]        
+                    proc = psutil.Process()
+                    filecount =  len(proc.open_files())
+                    logging.debug("Aufraeumen; listOfOpenFiles is %d, OS reports %d open files" % (len(globals.listOfOpenFiles), filecount))
 
+                globals.listOfOpenFiles.append(self)            
+                
             self.file=open(self.filename , 'rb+')
-            globals.listOfOpenFiles.append(self)
             self.readHeader()
+            if self.headerSize == 0: #invalid header    
+                rv = False
+                self.close()
+                logging.error("problem with Header of %s, closing" %(self.filename))                
+            else:
+                logging.debug("successfully opened file %s " % self.filename)
                             
         except IOError as e:
             #not necessarily an error since file just does not exist...
@@ -240,7 +259,7 @@ class archiveFileClass:
 
             if self.file is None:
                 self.file=open(self.filename, 'wb+')
-                self.headerSize=0 # to indicate that a header has to be written (can be done when writing!
+                self.headerSize=0 # to indicate that a header has to be written (can be done when writing!)
                 logging.info("archive created file %s" % self.filename)
                 
             self.file.seek(0,2)
@@ -465,7 +484,9 @@ class archiveFileClass:
     #       desc, unit, timestampfrom-to, dataType, NumberOfEntries, 
     #
     @logged(logging.DEBUG)
-    def getInfo(self):
+    def getInfo(self):     #archiveFileClass
+    
+        logging.debug("getting info on dp %s file Level for file %s " % (self.dp, self.filename))
 
         rv= [ "", "", None, None, None, 0, self.dp]
         # open files:
@@ -544,7 +565,7 @@ class archiveFileClass:
                         rest = self.headerRecordSize - len(dataToWrite)
                         if rest>0:
                             self.file.write (b'x'*rest)  #tuple repetition in bytes...
-                            #logging.error("archive.write had to fill record with %d bytes" % rest)
+                            logging.debug("archive.write had to fill record with %d bytes" % rest)
                         
                         self.fileSize += self.recordSize
                     except IOError as e:
@@ -561,7 +582,7 @@ class archiveFileClass:
             #self.flush()  # to be sure if there is cached data!
             self.file.close()
             self.file=None
-            logging.debug("File %s closed" % self.filename)
+            logging.debug("successfully closed file %s " % self.filename)
             
         return None
 
@@ -586,35 +607,39 @@ class archiveFileClass:
 
             try:
                 s = self.file.read(LENOFINT)
-                if (len(s) == LENOFINT):
+                if (not len(s) == LENOFINT):
+                    logging.error("Unable to read headerRecordSize (first %d bytes from header) from file %s" %(LENOFINT, self.filename))
+                else:
                     self.headerRecordSize =struct.unpack(">I",s)[0] # one integer
                     
-                s = self.file.read(LENOFINT)
-                if (len(s) == LENOFINT):
-                    self.headerSize =struct.unpack(">I",s)[0] # one integer
-                
-                if self.file.tell() < self.headerSize:
-                    self.headerDp =readString(self.file) # one string with len/ascii
-                    self.dp=self.headerDp
-                    
-                if self.file.tell() < self.headerSize:
-                    self.headerDataType   =readString(self.file) # one string with len/ascii
+                    s = self.file.read(LENOFINT)
+                    if (not len(s) == LENOFINT):
+                        logging.error("Unable to read headerSize (%d bytes from header) from file %s" %(LENOFINT, self.filename))
+                    else:
+                        self.headerSize =struct.unpack(">I",s)[0] # one integer
+                        
+                        if self.file.tell() < self.headerSize:
+                            self.headerDp =readString(self.file, self.filename, "read header Datapoint") # one string with len/ascii
+                            self.dp=self.headerDp
+                            
+                        if self.file.tell() < self.headerSize:
+                            self.headerDataType   =readString(self.file, self.filename, "read header Datatype") # one string with len/ascii
 
-                if self.file.tell() < self.headerSize:
-                    self.headerUnit       =readString(self.file) # one string with len/ascii
+                        if self.file.tell() < self.headerSize:
+                            self.headerUnit       =readString(self.file, self.filename, "read header Unit") # one string with len/ascii
+                            
+                        if self.file.tell() < self.headerSize:
+                            self.headerDesc       =readString(self.file, self.filename, "read header Description") # one string with len/ascii
+                            
+                        rv = True
                     
-                if self.file.tell() < self.headerSize:
-                    self.headerDesc       =readString(self.file) # one string with len/ascii
-                    
-                rv = True
-                
             except:
                 # probably empty file
                 self.headersize=0  # to indicate, there is no valid header.
                 logging.exception("unable to read Header for file: %s" %(self.filename))
                 
                 pass
-                        
+                            
         
         return rv
     
@@ -656,17 +681,17 @@ class archiveFileClass:
 #
 class archiveDPClass:
 
-    def __init__(self, dp):
+    def __init__(self, dp):   #archiveDPClass
         self.dp=dp
         # leg mal gleich alle files als archiveFileClass an die ich finde:
         self.fileList = list()
 
-    def __repr__ (self):
+    def __repr__ (self):   #archiveDPClass
         s="Object archiveDPClass for dp %s" % (self.dp)
         return s
     
     @logged(logging.DEBUG)
-    def close(self):
+    def close(self):   #archiveDPClass
         for x in self.fileList:
             x.flush()
             x.close()                
@@ -675,7 +700,7 @@ class archiveDPClass:
         return None
 
     @logged(logging.DEBUG)
-    def flush(self):
+    def flush(self):   #archiveDPClass
         for x in self.fileList:
             x.flush()
         return None
@@ -684,16 +709,16 @@ class archiveDPClass:
     #-------------------------------------------------------------------------------------------------
     # returns a new filename for the given dp and timestamp
     #
-    def getNewFilename(self, tim):
+    def getNewFilename(self, tim):   #archiveDPClass
         fn = getFileName(self.dp)
-        rv = fn + "-" + tim.strftime("%Y-%m-%d_%H.%M.%S") + globals.gConfig.archiveext
+        rv = fn + "-" + tim.strftime("%Y-%m-%d_%H.%M.%S") + globals.config.configMap["archiveext"]
         return rv
     
     #-------------------------------------------------------------------------------------------------
-    # returns list of archiveFileClass objects()
+    # returns sorted list of archiveFileClass objects()
     #
     @logged(logging.DEBUG)
-    def getFileList(self, tim):
+    def getFileList(self, tim):   #archiveDPClass
         rv = list()
         
         fn = getFileName(self.dp)
@@ -703,8 +728,10 @@ class archiveDPClass:
         #fn = fn.replace('x]x', '[]]')
         #fn = fn.replace(' ', '[ ]')
         fn = escape_glob(fn)
-        searchName = fn + "-2???-??-??_??.??.??*" + globals.gConfig.archiveext
-        fileNames = sorted(glob.glob(searchName))        
+        searchName = fn + "-2???-??-??_??.??.??*" + globals.config.configMap["archiveext"]
+        fileNames = glob.glob(searchName)
+        fileNames.sort() # to be sure that I just read the metadata from the recent one.
+
         
         # = [s.split('-')[1] for s in glob.glob(searchName)]
         if len(fileNames) > 0:
@@ -721,7 +748,7 @@ class archiveDPClass:
     # archiveDPClass::read()
     #
     @logged(logging.DEBUG)
-    def read(self, timestamp, n):
+    def read(self, timestamp, n):   #archiveDPClass
     
     
         rv = list()
@@ -756,13 +783,13 @@ class archiveDPClass:
     #  archiveDPClass::write()
     #
     @logged(logging.DEBUG)
-    def write(self, desc, value, unit, timestamp):
+    def write(self, desc, value, unit, timestamp):   #archiveDPClass
         rv = 0        
         # check which file to use:
         if len (self.fileList) == 0:
             self.fileList=self.getFileList(timestamp)
         rv = HEADERERROR
-        if self.fileList[-1].fileSize < int(globals.gConfig.archiveSplit):  #otherwise split file after 1MB
+        if self.fileList[-1].fileSize < int(globals.config.configMap["archiveSplit"]):  #otherwise split file after 1MB
             rv =  self.fileList[-1].write(desc, value, unit, timestamp)   # can also return HEADERRERROR
             
         if HEADERERROR == rv :
@@ -783,53 +810,74 @@ class archiveDPClass:
     #       desc, unit, timestampfrom-to,  dataType, NumberOfEntries, dp
     #
     @logged(logging.DEBUG)
-    def getInfo(self):
+    def getInfo(self):   #archiveDPClass
         rv= [ "", "", None, None, None, 0, ""]
         
-        # open files:
+        # create file objects if not yet existing:
         if len (self.fileList) == 0:
             self.fileList=self.getFileList(datetime.datetime.now())
-        for file in self.fileList:
-            if file is not None:
-                fi =  file.getInfo()
-                print ("archive.getInfo: file.getinfo is " + str(fi))
-                desc, unit, timestampFrom, timestampTo, dataType, numberOfEntries, dp = fi
-                rv[0] = desc
-                rv[1] = unit
-                if timestampFrom is not None:
-                    if rv[2] is None or rv[2]>timestampFrom:
-                        rv[2]=timestampFrom
-                    
-                if timestampTo is not None:
-                    if rv[3] is None or rv[3]<timestampTo:
-                        rv[3]=timestampTo
+            
+        #do not open every file, to get timestamps, just the most recent one:
+        #fileList is sorted    
+        
+        #logging.error("getInfo on dp Level has sorted fileList %s " % (",".join([f.filename for f in self.fileList])))
+        
+        if len (self.fileList) > 0:
+            timestampFrom = self.fileList[0].timestamp   # get it out of the filename of the first file
+            #other info get from last file (unfortunately I have to open it with getInfo:
+            fi =  self.fileList[-1].getInfo()  # warning: expensive operation, opens file!
+            desc, unit, timestampFrom, timestampTo, dataType, numberOfEntries, dp = fi
+            logging.debug("getInfo on dp Level got data from last file %s is %s "%(self.fileList[-1].filename, str(fi)))
+            rv[0] = desc
+            rv[1] = unit                
+            rv[2] = timestampFrom
+            rv[3] = timestampTo
+            rv[4] = dataType
+            rv[5] = numberOfEntries  #ignores older entries; important???? at least it delivers something > 0...
+            rv[6] = dp
+            
+        if False: # obsolete because time expensive
+            for file in self.fileList:
+                if file is not None:
+                    fi =  file.getInfo()  # warning: expensive operation, opens file!
+                    ##print ("archive.getInfo: file.getinfo is " + str(fi))
+                    desc, unit, timestampFrom, timestampTo, dataType, numberOfEntries, dp = fi
+                    rv[0] = desc
+                    rv[1] = unit
+                    if timestampFrom is not None:
+                        if rv[2] is None or rv[2]>timestampFrom:
+                            rv[2]=timestampFrom
+                        
+                    if timestampTo is not None:
+                        if rv[3] is None or rv[3]<timestampTo:
+                            rv[3]=timestampTo
 
-                rv[4] = dataType
-                rv[5] += numberOfEntries
-                rv[6] = dp
-                
+                    rv[4] = dataType
+                    rv[5] += numberOfEntries
+                    rv[6] = dp
+                    
         return rv
      
 #----------------------------------------------------------------------------------------------------
 # ist der container für die archive DP klasse, verwaltet Liste von archiveDPClass
 #
 class archiveClass:
-    def __init__(self):        
+    def __init__(self):        #archiveClass
         self.archiveDPs = dict()   # dict of archiveDPClass instances, key is dp
         pass
 
-    def __repr__ (self):
+    def __repr__ (self):        #archiveClass
         s="Object  archiveClass"
         return s
 
 #closes all open archiveDPClass (and files)
-    def close(self):
+    def close(self):        #archiveClass
         for x in self.archiveDPs.values():
             x.close()            
         pass
 
 #flushes all open archiveDPClass (and files)
-    def flush(self):
+    def flush(self):        #archiveClass
         for x in self.archiveDPs.values():
             x.flush()
         pass
@@ -838,7 +886,7 @@ class archiveClass:
     # Summenhaeufigkeit
     # actually the time per data spent below this value
     #----------------------------------------------------------------------------------------------------
-    def calcSU(self, data, baseTimestamp):
+    def calcSU(self, data, baseTimestamp):        #archiveClass
         rv = list()
         if len(data)> 0:
 
@@ -873,7 +921,7 @@ class archiveClass:
     #   INTEGRAL *dt
     #    integriert über die gesamte periode
     #----------------------------------------------------------------------------------------------------
-    def calcINT(self, data, baseTimestamp):
+    def calcINT(self, data, baseTimestamp):        #archiveClass
         rv = list()
         if len(data)> 0:
             integral=0
@@ -895,7 +943,7 @@ class archiveClass:
     #----------------------------------------------------------------------------------------------------
     #
     #----------------------------------------------------------------------------------------------------
-    def calcSUM(self, data, baseTimestamp):
+    def calcSUM(self, data, baseTimestamp):        #archiveClass
         rv = list()
         if len(data)> 0:
             sum = 0
@@ -908,7 +956,7 @@ class archiveClass:
     #----------------------------------------------------------------------------------------------------
     #  DIFFERENTIAL /dt
     #----------------------------------------------------------------------------------------------------
-    def calcDIF(self, data, baseTimestamp):
+    def calcDIF(self, data, baseTimestamp):        #archiveClass
         rv = list()
         if len(data)> 0:
             lastdat=data[0][1]
@@ -927,7 +975,7 @@ class archiveClass:
     #----------------------------------------------------------------------------------------------------
     #
     #----------------------------------------------------------------------------------------------------
-    def calcMAX(self, data, baseTimestamp):
+    def calcMAX(self, data, baseTimestamp):        #archiveClass
         rv = list()
         if len(data)> 0:
             max=  -1e99
@@ -942,7 +990,7 @@ class archiveClass:
     #----------------------------------------------------------------------------------------------------
     #
     #----------------------------------------------------------------------------------------------------
-    def calcMIN(self, data, baseTimestamp):
+    def calcMIN(self, data, baseTimestamp):        #archiveClass
         rv = list()
         if len(data)> 0:
             min=1e99
@@ -957,7 +1005,7 @@ class archiveClass:
     #----------------------------------------------------------------------------------------------------
     #
     #----------------------------------------------------------------------------------------------------
-    def calcAVG(self, data, baseTimestamp):
+    def calcAVG(self, data, baseTimestamp):        #archiveClass
         rv = list()
         if len(data)> 0:
             sum = 0
@@ -970,7 +1018,7 @@ class archiveClass:
     #----------------------------------------------------------------------------------------------------
     #
     #----------------------------------------------------------------------------------------------------
-    def calcDELTA(self, data, baseTimestamp):
+    def calcDELTA(self, data, baseTimestamp):        #archiveClass
         rv = list()
         #print ("calcDelta gets " + str(data))        
         
@@ -1001,7 +1049,7 @@ class archiveClass:
     #
     #
     #----------------------------------------------------------------------------------------------------
-    def  calculate1(self, data,oper, baseTimestamp):
+    def  calculate1(self, data,oper, baseTimestamp):        #archiveClass
     
         rv = list()
         
@@ -1044,7 +1092,7 @@ class archiveClass:
     #
     #
     #----------------------------------------------------------------------------------------------------
-    def calculateOper(self, dp, oper, timestampFrom, timestampTo):
+    def calculateOper(self, dp, oper, timestampFrom, timestampTo):        #archiveClass
     
         #print ("calculateOper tries from %s to %s " % (str(timestampFrom), str(timestampTo)))    
         rv = list()
@@ -1097,7 +1145,7 @@ class archiveClass:
     #           "MAX", "MIN", "AVG"
     #
     @logged(logging.DEBUG)
-    def read(self, dp, timestamp, m, timeDelta = None, operation = None, timeStampTo = None):
+    def read(self, dp, timestamp, m, timeDelta = None, operation = None, timeStampTo = None):        #archiveClass
 
         rv = list()
     
@@ -1189,11 +1237,13 @@ class archiveClass:
     #       desc, unit, timestampfrom-to, dataType, NumberOfEntries, 
     #
     @logged(logging.DEBUG)
-    def getInfo(self, dp):
+    def getInfo(self, dp):        #archiveClass
 
         if dp not in self.archiveDPs:
             self.archiveDPs[dp] = archiveDPClass(dp)        
-        
+
+        #logging.debug("archiveClass. getInfo called for dp %s" %(dp))
+
         rv = self.archiveDPs[dp].getInfo()
         return rv
     
@@ -1201,7 +1251,7 @@ class archiveClass:
     # getDatapoints: returns list of datapoints 
     # cached:
     #  
-    def getDatapoints(self):
+    def getDatapoints(self):        #archiveClass
     
         rv = globals.archiveCache.get("getDataPoints", self.raw_getDatapoints, 86400) # the list of datapoints shall change only once a day.
         return rv
@@ -1209,18 +1259,20 @@ class archiveClass:
     #-------------------------------------------------------------------------------------------------
     # raw getDatapoints: returns list of datapoints 
     #  
-    def raw_getDatapoints(self, dummyForCache):
+    def raw_getDatapoints(self, dummyForCache):        #archiveClass
     
         rv = list()
 
         #getFileName provides base path.
         #mod_ttyusb_modbus_2_zaehler_systempower-2017-01-31_21.02.20.pvOpt
 
-        formatStringTS = "-2???-??-??_??.??.??" + globals.gConfig.archiveext
+        formatStringTS = "-2???-??-??_??.??.??" + globals.config.configMap["archiveext"]
         prefix = getFileName("") 
         
         searchName = prefix + "*" + formatStringTS
         fileNames = glob.glob(searchName)
+        fileNames.sort(reverse=True) # to be sure that I just read the metadata from the recent one.
+
         zeroLen = list()
         # use only file greater than 40 bytes (header + some data)
         for f in fileNames:
@@ -1228,19 +1280,14 @@ class archiveClass:
             #print ("size of %s is %s " % (f, repr(size)))
             
             if size < 40:
-                #print("to be removed file due to filezise %s " % f)
                 zeroLen.append(f)
-                #fileNames.remove(f)
         
         for f in zeroLen:
-            #print("remove file due to filezise %s " % f)
+            logging.info("ignore file %s due to filezise < 40bytes" % f)
             fileNames.remove(f)
             
         dpNames = { x[len(prefix) : - len(formatStringTS) ] : x for x in fileNames} #trim timestamp
         fList = list(set(dpNames.values())) #distinct datapoints
-
-        #print("dpNames is  %s " % repr(dpNames))
-        #print("fList is  %s " % repr(fList))
 
         #rv.append (["found %d datapoints" % len(fList), "", None, None, None, 0, ""])
         for fn in fList:
@@ -1248,7 +1295,7 @@ class archiveClass:
             fileInfo = archiveFile.getInfo()
             archiveFile.close()
             
-            #print("fileInfo of filename %s is %s " % (fn, repr(fileInfo)))
+            #logging.error ("NotAnError: getting fileInfo of filename %s is %s " % (fn, repr(fileInfo)))
 
             
             #rv.append(dpNames[fn])
@@ -1272,7 +1319,7 @@ class archiveClass:
     # [name, ]
     # 
     @logged(logging.DEBUG)
-    def write(self, data):
+    def write(self, data):        #archiveClass
     #dp, unit, timestamp, dataToWrite):
     
         rv = False
@@ -1313,6 +1360,7 @@ class archiveClass:
 
 #----------------------------------------------------------------------------------------------------
 # Buffer conversion helper functions:
+# warum sind die nicht in einem helper-modul?
 #
 #
 def timeToBuf(t):
@@ -1397,9 +1445,14 @@ def xToBuf(value):
 # readString:
 #
 
-def readString(file):
+def readString(file, filename, operationDescription):
     len=struct.unpack(">I", file.read(LENOFINT))[0]
-    s=file.read(len).decode("utf-8")    
+    try:
+        s=file.read(len).decode("utf-8")    
+    except Exception as e:
+        logging.exception("Unable to read and decode %d bytes from %s for %s" % (len, filename, operationDescription))
+        s=""
+    
     return s
 
 #----------------------------------------------------------------------------------------------------
@@ -1427,7 +1480,13 @@ def getFileName(dp):
         rv = rv.replace(ch, "_")
     # and append basic path:
     
-    rv = globals.gConfig.archivepath + rv  
+    #print("getfilename archive configmap is --------------------");
+    #print (globals.config.configMap)
+    #print("-------------------------------- --------------------");
+
+    #import web_pdb; web_pdb.set_trace() #debugging
+    rv = globals.config.configMap["archivepath"] + rv  
+
     
     return rv
     
@@ -1565,5 +1624,5 @@ def main():
         
 if __name__ == "__main__":
     with config.configClass() as configuration:
-        globals.gConfig= configuration
+        globals.config= configuration
         main()
